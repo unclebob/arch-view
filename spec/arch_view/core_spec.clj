@@ -18,4 +18,9 @@
         (should= #{"my.app.a" "my.app.b"}
                  (get-in architecture [:graph :nodes]))
         (should= #{{:from "my.app.a" :to "my.app.b"}}
-                 (get-in architecture [:graph :edges]))))))
+                 (get-in architecture [:graph :edges]))
+        (should= [{:index 0 :modules ["my.app.b"]}
+                  {:index 1 :modules ["my.app.a"]}]
+                 (get-in architecture [:layout :layers]))
+        (should= {"my.app.a" 1 "my.app.b" 0}
+                 (get-in architecture [:layout :module->layer]))))))
