@@ -2,9 +2,24 @@
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
         quil/quil {:mvn/version "4.3.1563"}}
  :aliases
- {:check {:extra-deps {unclebob/speclj-structure-check {:git/url "https://github.com/unclebob/speclj-structure-check.git"
-                                                        :sha "7cc804c4e99b3482ca1d8a26b735ed41751a03ab"}}
+ {:spec-structure-check {:extra-deps {io.github.unclebob/speclj-structure-check
+                                      {:git/url "https://github.com/unclebob/speclj-structure-check"
+                                       :git/sha "7cc804c4e99b3482ca1d8a26b735ed41751a03ab"}}
+                         :main-opts ["-m" "speclj-structure-check.core"]}
+  :check {:extra-deps {io.github.unclebob/speclj-structure-check
+                       {:git/url "https://github.com/unclebob/speclj-structure-check"
+                        :git/sha "7cc804c4e99b3482ca1d8a26b735ed41751a03ab"}}
           :main-opts ["-m" "speclj-structure-check.core"]}
   :spec {:extra-paths ["spec"]
          :extra-deps {speclj/speclj {:mvn/version "3.10.0"}}
-         :main-opts ["-m" "speclj.main" "-c"]}}}
+         :main-opts ["-m" "speclj.main" "-c"]}
+  :mutate {:extra-deps {io.github.unclebob/clj-mutate
+                        {:git/url "https://github.com/unclebob/clj-mutate"
+                         :git/sha "223da6c1a814265d0a714417def997ce7878a8da"}}
+           :main-opts ["-m" "clj-mutate.core"]
+           :extra-paths ["spec"]}
+  :crap {:extra-deps {io.github.unclebob/crap4clj
+                      {:git/url "https://github.com/unclebob/crap4clj"
+                       :git/sha "9f12da1b09bc1177f8f058108cf22a73bc9a97a0"}}
+         :extra-paths ["spec"]
+         :main-opts ["-m" "crap4clj.core"]}}}
