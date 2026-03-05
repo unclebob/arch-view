@@ -100,7 +100,7 @@
         [rx ry] right]
     (if closed?
       (do
-        (q/fill 0)
+        (q/no-fill)
         (q/triangle tx ty lx ly rx ry))
       (do
         (q/no-fill)
