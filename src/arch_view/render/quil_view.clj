@@ -586,6 +586,13 @@
        (apply max 0)
        (+ 40)))
 
+(defn- content-width-for-scene
+  [scene]
+  (->> (:layer-rects scene)
+       (map (fn [{:keys [x width]}] (+ x width)))
+       (apply max 0)
+       (+ racetrack-margin 20.0)))
+
 (defn thumb-y->scroll
   [thumb-y content-height viewport-height]
   (if (<= content-height viewport-height)
@@ -1113,9 +1120,7 @@
                                (+ 40))
                           400)
          viewport-height (int (min 900 (max 400 content-height)))
-         width (if (seq (:layer-rects initial-scene))
-                 (:width (first (:layer-rects initial-scene)))
-                 1200)]
+         width (int (max 1200 (content-width-for-scene initial-scene)))]
      (q/sketch
        :title title
        :size [width viewport-height]
