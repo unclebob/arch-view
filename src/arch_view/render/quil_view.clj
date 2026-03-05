@@ -114,15 +114,26 @@
       center
       tip)))
 
+(def ^:private label-clearance 12.0)
+
+(defn dependency-tip-point
+  [x1 y1 x2 y2]
+  (let [dy (- y2 y1)]
+    (cond
+      (> dy 0.1) [(double x2) (- (double y2) label-clearance)]
+      (< dy -0.1) [(double x2) (+ (double y2) label-clearance)]
+      :else [(double x2) (double y2)])))
+
 (defn- draw-edge
   [points {:keys [from to arrowhead]}]
   (let [{x1 :x y1 :y} (get points from)
         {x2 :x y2 :y} (get points to)]
     (when (and x1 y1 x2 y2)
-      (let [[ex ey] (edge-line-endpoint x1 y1 x2 y2 arrowhead)]
+      (let [[tx ty] (dependency-tip-point x1 y1 x2 y2)
+            [ex ey] (edge-line-endpoint x1 y1 tx ty arrowhead)]
       (q/stroke 40 40 40)
       (q/line x1 y1 ex ey)
-      (draw-arrowhead x1 y1 x2 y2 arrowhead)))))
+      (draw-arrowhead x1 y1 tx ty arrowhead)))))
 
 (defn- draw-scene
   [scene]
