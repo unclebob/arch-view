@@ -320,6 +320,44 @@
       (should= 0.0 (:scroll-y next-state))
       (should= [{:path [] :scroll-y 123.0}] (:nav-stack next-state))))
 
+  (it "labels leaf nodes with source filename extension"
+    (let [architecture {:graph {:nodes #{"empire.alpha.one"}
+                                :edges #{}
+                                :abstract-modules #{}
+                                :module->source-file {"empire.alpha.one" "/tmp/one.cljc"}}
+                        :classified-edges #{}}
+          alpha-view (sut/view-architecture architecture ["alpha"])
+          scene (sut/build-scene alpha-view)
+          one-node (some #(when (= "one" (:module %)) %) (:module-positions scene))]
+      (should= "one.cljc" (:label one-node))
+      (should= true (:leaf? one-node))
+      (should= "/tmp/one.cljc" (:source-file one-node))))
+
+  (it "opens source window when leaf node is clicked"
+    (let [opened (atom nil)
+          architecture {:graph {:nodes #{"empire.alpha.one"}
+                                :edges #{}
+                                :abstract-modules #{}
+                                :module->source-file {"empire.alpha.one" "/tmp/one.cljc"}}
+                        :classified-edges #{}}
+          alpha-view (sut/view-architecture architecture ["alpha"])
+          scene (sut/attach-drillable-markers (sut/build-scene alpha-view) architecture ["alpha"])
+          one-pos (some #(when (= "one" (:module %)) %) (:module-positions scene))
+          state {:scene scene
+                 :architecture architecture
+                 :namespace-path ["alpha"]
+                 :nav-stack []
+                 :declutter-mode :all
+                 :scroll-y 0.0
+                 :dragging-scrollbar? false
+                 :drag-offset nil
+                 :viewport-height 600
+                 :viewport-width 1200}]
+      (with-redefs [sut/open-source-file-window! (fn [path] (reset! opened path))]
+        (let [next-state (sut/handle-mouse-clicked state {:x (:x one-pos) :y (:y one-pos)})]
+          (should= state next-state)
+          (should= "/tmp/one.cljc" @opened)))))
+
   (it "back button at top level does nothing"
     (let [state {:scene {:module-positions [] :layer-rects [] :edge-drawables []}
                  :architecture nil

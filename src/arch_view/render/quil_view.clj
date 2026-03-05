@@ -1,8 +1,12 @@
 (ns arch-view.render.quil-view
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [arch-view.layout.layers :as layers]
             [quil.core :as q]
-            [quil.middleware :as m]))
+            [quil.middleware :as m])
+  (:import [javax.swing JFrame JEditorPane JScrollPane SwingUtilities]
+           [java.awt Dimension]
+           [java.util.regex Pattern]))
 
 (defn- layer-y
   [index layer-height layer-gap]
@@ -133,7 +137,10 @@
   (let [layers (get-in architecture [:layout :layers])
          module->component (or (:module->component architecture) {})
          module->kind (or (:module->kind architecture) {})
+         module->leaf? (or (:module->leaf? architecture) {})
+         module->source-file (or (:module->source-file architecture) {})
          module->full-name (or (:module->full-name architecture) {})
+         module->display-label (or (:module->display-label architecture) {})
          layer-rects (mapv (fn [{:keys [index]}]
                              (let [modules (get-in architecture [:layout :layers index :modules])
                                    component (dominant-component modules module->component)]
@@ -151,7 +158,10 @@
                                          (->> (module-positions-for-layer index modules canvas-width layer-height layer-gap module->kind module->full-name)
                                               (map (fn [m]
                                                      (assoc m
-                                                            :label (abbreviate-module-name (:module m))
+                                                            :leaf? (boolean (get module->leaf? (:module m)))
+                                                            :source-file (get module->source-file (:module m))
+                                                            :label (or (get module->display-label (:module m))
+                                                                       (abbreviate-module-name (:module m)))
                                                             :full-name (strip-top-namespace (:full-name m)))))
                                               apply-layer-stagger)))
                                vec)
@@ -465,6 +475,67 @@
   (q/text-align :left :center)
   (q/text full-name (+ mx 18) (+ my 22)))
 
+(defn- html-escape
+  [s]
+  (-> (or s "")
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
+
+(defn- colorize-clojure-html
+  [source]
+  (let [escaped (html-escape source)
+        comment-pattern (Pattern/compile "(?m);.*$")
+        string-pattern (Pattern/compile "\"([^\"\\\\]|\\\\.)*\"")
+        keyword-pattern (Pattern/compile ":[a-zA-Z0-9\\-\\?!_\\./]+")
+        apply-style (fn [text pattern class-name]
+                      (let [matcher (.matcher pattern text)
+                            sb (StringBuffer.)]
+                        (loop []
+                          (if (.find matcher)
+                            (do
+                              (.appendReplacement matcher sb (str "<span class='" class-name "'>$0</span>"))
+                              (recur))
+                            (do
+                              (.appendTail matcher sb)
+                              (str sb))))))]
+    (-> escaped
+        (apply-style string-pattern "str")
+        (apply-style keyword-pattern "kw")
+        (apply-style comment-pattern "cmt"))))
+
+(defn- source->html
+  [title source]
+  (str "<html><head><style>"
+       "body{margin:0;padding:0;background:#f8fafc;color:#111827;font-family:Menlo,Monaco,Consolas,monospace;}"
+       ".hdr{padding:10px 12px;background:#e5e7eb;border-bottom:1px solid #cbd5e1;font-family:sans-serif;font-size:13px;}"
+       ".src{padding:12px;white-space:pre;line-height:1.35;font-size:13px;}"
+       ".cmt{color:#6b7280;}"
+       ".str{color:#b45309;}"
+       ".kw{color:#1d4ed8;}"
+       "</style></head><body>"
+       "<div class='hdr'>" (html-escape title) "</div>"
+       "<div class='src'>" (colorize-clojure-html source) "</div>"
+       "</body></html>"))
+
+(defn open-source-file-window!
+  [source-file]
+  (when (and source-file (.exists (io/file source-file)))
+    (let [content (slurp source-file)
+          title (.getName (io/file source-file))]
+      (SwingUtilities/invokeLater
+        (fn []
+          (let [frame (JFrame. (str "Source: " title))
+                editor (JEditorPane. "text/html" (source->html source-file content))
+                scroll (JScrollPane. editor)]
+            (.setEditable editor false)
+            (.setCaretPosition editor 0)
+            (.setPreferredSize scroll (Dimension. 980 760))
+            (.add (.getContentPane frame) scroll)
+            (.pack frame)
+            (.setLocationByPlatform frame true)
+            (.setVisible frame true)))))))
+
 (defn- draw-scrollbar
   [content-height viewport-height scroll-y viewport-width]
   (when-let [{:keys [x y width height]} (scrollbar-rect content-height viewport-height scroll-y viewport-width)]
@@ -556,7 +627,10 @@
           (-> state
               push-nav-state
               (drilldown-scene candidate 0.0))
-          state))
+          (do
+            (when-let [source-file (:source-file hovered)]
+              (open-source-file-window! source-file))
+            state)))
       state)))
 
 (defn- navigate-up
@@ -611,6 +685,11 @@
   [module]
   (vec (rest (str/split module #"\."))))
 
+(defn- source-filename
+  [path]
+  (when path
+    (.getName (io/file path))))
+
 (defn- prefix?
   [prefix parts]
   (and (<= (count prefix) (count parts))
@@ -619,6 +698,7 @@
 (defn view-architecture
   [architecture namespace-path]
   (let [all-modules (or (get-in architecture [:graph :nodes]) #{})
+        module->source-file-all (or (get-in architecture [:graph :module->source-file]) {})
         scoped-modules (->> all-modules
                             (filter (fn [m]
                                       (let [parts (namespace-segments m)]
@@ -629,6 +709,10 @@
                            (for [m scoped-modules
                                  :let [parts (namespace-segments m)]]
                              [m (nth parts (count namespace-path))]))
+        modules-by-child (reduce (fn [acc module]
+                                   (update acc (get module->child module) (fnil conj #{}) module))
+                                 {}
+                                 scoped-modules)
         nodes (set (vals module->child))
         abstract-source (or (get-in architecture [:graph :abstract-modules]) #{})
         module->kind (into {}
@@ -638,6 +722,31 @@
                                          scoped-modules)
                                  :abstract
                                  :concrete)]))
+        module->leaf? (into {}
+                            (for [n nodes
+                                  :let [modules (get modules-by-child n)
+                                        leaf? (every? (fn [m]
+                                                        (= (count (namespace-segments m))
+                                                           (inc (count namespace-path))))
+                                                      modules)]]
+                              [n leaf?]))
+        module->source-file (into {}
+                                 (for [n nodes
+                                       :let [modules (get modules-by-child n)
+                                             exact-module (some (fn [m]
+                                                                  (when (= (namespace-segments m)
+                                                                           (conj (vec namespace-path) n))
+                                                                    m))
+                                                                modules)
+                                             source-file (get module->source-file-all exact-module)]]
+                                   [n source-file]))
+        module->display-label (into {}
+                                    (for [n nodes
+                                          :let [leaf? (true? (get module->leaf? n))
+                                                source-file (get module->source-file n)]]
+                                      [n (if leaf?
+                                           (or (source-filename source-file) n)
+                                           n)]))
         module->full-name (into {}
                                (for [n nodes]
                                  [n (str/join "." (concat namespace-path [n]))]))
@@ -664,6 +773,9 @@
      :layout layout
      :classified-edges classified-edges
      :module->kind module->kind
+     :module->leaf? module->leaf?
+     :module->source-file module->source-file
+     :module->display-label module->display-label
      :module->full-name module->full-name}))
 
 (defn- drilldown-scene

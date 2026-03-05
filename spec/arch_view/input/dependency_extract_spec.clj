@@ -15,7 +15,11 @@
         (should= #{"my.app.a" "my.app.b"}
                  (:nodes graph))
         (should= #{{:from "my.app.a" :to "my.app.b"}}
-                 (:edges graph)))))
+                 (:edges graph))
+        (should= (.getAbsolutePath a-file)
+                 (get (:module->source-file graph) "my.app.a"))
+        (should= (.getAbsolutePath b-file)
+                 (get (:module->source-file graph) "my.app.b")))))
 
   (it "supports reader conditionals in namespace forms"
     (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-src-rc" (make-array java.nio.file.attribute.FileAttribute 0)))

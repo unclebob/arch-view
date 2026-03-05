@@ -74,6 +74,16 @@
                                    :let [module (namespace-in-file f)]
                                    :when module]
                                [f module]))
+        files-by-module (reduce (fn [acc [file module]]
+                                  (update acc module (fnil conj []) file))
+                                {}
+                                module-by-file)
+        module->source-file (into {}
+                                  (for [[module module-files] files-by-module
+                                        :let [best-file (->> module-files
+                                                             sort
+                                                             first)]]
+                                    [module best-file]))
         nodes (set (vals module-by-file))
         abstract-modules (set
                           (for [[file module] module-by-file
@@ -87,4 +97,5 @@
                              {:from from :to to})))
                        module-by-file))]
     (merge (graph/make-graph nodes edges)
-           {:abstract-modules abstract-modules})))
+           {:abstract-modules abstract-modules
+            :module->source-file module->source-file})))
