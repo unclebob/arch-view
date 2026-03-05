@@ -939,15 +939,17 @@
                       (* (- py proj-y) (- py proj-y))))))))
 
 (defn hovered-edge
-  [spaced-edges points bounds mx my]
-  (->> spaced-edges
-       (map (fn [edge]
-              (when-let [{:keys [x1 y1 x2 y2]} (resolved-edge-segment points bounds edge)]
-                (assoc edge :distance (point->segment-distance mx my x1 y1 x2 y2)))))
-       (remove nil?)
-       (filter #(<= (double (:distance %)) 8.0))
-       (sort-by :distance)
-       first))
+  ([spaced-edges points bounds mx my]
+   (hovered-edge spaced-edges points bounds mx my 8.0))
+  ([spaced-edges points bounds mx my tolerance]
+   (->> spaced-edges
+        (map (fn [edge]
+               (when-let [{:keys [x1 y1 x2 y2]} (resolved-edge-segment points bounds edge)]
+                 (assoc edge :distance (point->segment-distance mx my x1 y1 x2 y2)))))
+        (remove nil?)
+        (filter #(<= (double (:distance %)) (double tolerance)))
+        (sort-by :distance)
+        first)))
 
 (defn edge-hover-label
   [{:keys [from to count]}]
@@ -1067,7 +1069,7 @@
                 :max-y (- world-bottom (/ 14.0 z))}
         spaced-edges (prepare-edge-drawables scene declutter-mode)
         hovered-arrow (when interactive-canvas?
-                        (hovered-edge spaced-edges points bounds world-mx world-my))
+                        (hovered-edge spaced-edges points bounds world-mx world-my (/ 8.0 z)))
         hovered (when interactive-canvas?
                   (hovered-module-position (:module-positions scene) world-mx world-my))
         hovered-layer (when interactive-canvas?

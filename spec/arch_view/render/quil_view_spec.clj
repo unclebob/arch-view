@@ -143,6 +143,16 @@
       (should= "b" (:to hovered))
       (should= 2 (:count hovered))))
 
+  (it "respects caller-provided hover tolerance"
+    (let [points {"a" {:x 100.0 :y 100.0}
+                  "b" {:x 300.0 :y 100.0}}
+          bounds {:min-x 0.0 :max-x 500.0 :min-y 0.0 :max-y 500.0}
+          edges [{:from "a" :to "b" :count 1 :arrowhead :standard}]
+          miss (sut/hovered-edge edges points bounds 170.0 109.0 8.0)
+          hit (sut/hovered-edge edges points bounds 170.0 109.0 10.0)]
+      (should= nil miss)
+      (should-not= nil hit)))
+
   (it "separates opposite-direction horizontal arrows"
     (let [points {"a" {:x 100.0 :y 100.0}
                   "b" {:x 300.0 :y 100.0}}
