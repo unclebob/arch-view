@@ -149,6 +149,7 @@
                                 :y (layer-y index layer-height layer-gap)
                                 :width canvas-width
                                 :height layer-height
+                                :full-name (some-> modules first module->full-name strip-top-namespace)
                                 :label (or (get layer->label index)
                                            (if component
                                          (name component)
@@ -415,6 +416,23 @@
               module)))
         module-positions))
 
+(defn- layer-label-hitbox
+  [{:keys [x y label]}]
+  (let [width (label-width label)]
+    {:left (+ x 6.0)
+     :right (+ x 10.0 width)
+     :top (+ y 4.0)
+     :bottom (+ y 22.0)}))
+
+(defn hovered-layer-label
+  [layer-rects mx my]
+  (some (fn [{:keys [label] :as layer-rect}]
+          (let [{:keys [left right top bottom]} (layer-label-hitbox layer-rect)]
+            (when (and (<= left mx right)
+                       (<= top my bottom))
+              layer-rect)))
+        layer-rects))
+
 (defn- hovered-module-position
   [module-positions mx my]
   (some (fn [m]
@@ -654,7 +672,8 @@
         mx (double (q/mouse-x))
         my (double (q/mouse-y))
         world-my (+ my scroll-y)
-        hovered (hovered-module-position (:module-positions scene) mx world-my)]
+        hovered (hovered-module-position (:module-positions scene) mx world-my)
+        hovered-layer (hovered-layer-label (:layer-rects scene) mx world-my)]
     (q/cursor (if (:drillable? hovered)
                 :cross
                 :arrow))
@@ -664,8 +683,9 @@
     (draw-scene-content scene declutter-mode)
     (q/pop-matrix)
     (draw-toolbar state)
-    (when hovered
-      (draw-tooltip (:full-name hovered) mx my))
+    (cond
+      hovered (draw-tooltip (:full-name hovered) mx my)
+      (:full-name hovered-layer) (draw-tooltip (:full-name hovered-layer) mx my))
     (draw-scrollbar content-height viewport-height scroll-y viewport-width)))
 
 (defn handle-key-pressed
@@ -798,18 +818,22 @@
   (and (<= (count prefix) (count parts))
        (= prefix (subvec parts 0 (count prefix)))))
 
-(defn- topo-order
+(defn- sink-first-order
   [nodes edges]
   (let [outgoing (reduce (fn [acc {:keys [from to]}]
                            (update acc from (fnil conj #{}) to))
                          {}
                          edges)
-        incoming-count (merge (zipmap nodes (repeat 0))
-                              (frequencies (map :to edges)))]
+        incoming (reduce (fn [acc {:keys [from to]}]
+                           (update acc to (fnil conj #{}) from))
+                         {}
+                         edges)
+        outdeg (merge (zipmap nodes (repeat 0))
+                      (frequencies (map :from edges)))]
     (loop [remaining (set nodes)
-           indeg incoming-count
+           degree outdeg
            available (into (sorted-set)
-                           (filter #(zero? (get indeg % 0)) nodes))
+                           (filter #(zero? (get degree % 0)) nodes))
            ordered []]
       (if (empty? remaining)
         ordered
@@ -818,19 +842,19 @@
                   (first (sort remaining)))
               next-remaining (disj remaining n)
               next-available (disj available n)
-              [next-indeg next-available]
+              [next-degree next-available]
               (reduce (fn [[deg avail] m]
                         (let [new-count (dec (get deg m 0))
-                              next-deg (assoc deg m new-count)
+                              next-deg (assoc deg m (max 0 new-count))
                               next-avail (if (and (contains? next-remaining m)
                                                   (zero? new-count))
                                            (conj avail m)
                                            avail)]
                           [next-deg next-avail]))
-                      [indeg next-available]
-                      (get outgoing n #{}))]
+                      [degree next-available]
+                      (get incoming n #{}))]
           (recur next-remaining
-                 next-indeg
+                 next-degree
                  next-available
                  (conj ordered n)))))))
 
@@ -866,7 +890,7 @@
 
 (defn- namespace-layout
   [nodes edges]
-  (let [ordered (-> (topo-order nodes edges)
+  (let [ordered (-> (sink-first-order nodes edges)
                     (optimize-order edges)
                     vec)
         layers (mapv (fn [idx module]

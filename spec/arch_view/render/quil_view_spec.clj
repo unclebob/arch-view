@@ -15,7 +15,7 @@
       (should= [{:index 0 :x 0 :y 0 :width 1000 :height 120}
                 {:index 1 :x 0 :y 150 :width 1000 :height 120}
                 {:index 2 :x 0 :y 300 :width 1000 :height 120}]
-               (mapv #(dissoc % :label) (:layer-rects scene)))
+               (mapv #(dissoc % :label :full-name) (:layer-rects scene)))
       (should= ["a" "c"]
                (->> (:module-positions scene)
                     (filter #(= 2 (:layer %)))
@@ -102,6 +102,17 @@
                     :y 50.0}]]
       (should= "alpha.beta.core" (sut/hovered-module modules 100.0 50.0))
       (should= nil (sut/hovered-module modules 300.0 300.0))))
+
+  (it "finds hovered layer label by label hitbox"
+    (let [layers [{:index 0
+                   :x 0.0
+                   :y 0.0
+                   :width 1000.0
+                   :height 120.0
+                   :label "alpha.beta"
+                   :full-name "alpha.beta"}]]
+      (should-not= nil (sut/hovered-layer-label layers 12.0 10.0))
+      (should= nil (sut/hovered-layer-label layers 600.0 80.0))))
 
   (it "computes and clamps vertical scroll range"
     (should= 600.0 (sut/scroll-range 1200 600))
@@ -224,8 +235,8 @@
           scene (sut/build-scene root-view)
           layer-by-module (into {} (map (juxt :module :layer) (:module-positions scene)))
           labels (mapv :label (:layer-rects scene))]
-      (should= true (< (get layer-by-module "ui")
-                       (get layer-by-module "acceptance")))
+      (should= true (< (get layer-by-module "acceptance")
+                       (get layer-by-module "ui")))
       (should-not= nil (some #{"ui"} labels))
       (should-not= nil (some #{"acceptance"} labels))
       (should-not= nil (some #{"application"} labels))))
