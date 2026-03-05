@@ -8,6 +8,22 @@
   (with-open [r (java.io.PushbackReader. (io/reader path))]
     (read {:read-cond :allow :features #{:clj}} r)))
 
+(defn- read-all-forms
+  [path]
+  (with-open [r (java.io.PushbackReader. (io/reader path))]
+    (loop [forms []]
+      (let [form (try
+                   (read {:read-cond :allow :features #{:clj}} r)
+                   (catch java.io.EOFException _
+                     ::eof)
+                   (catch RuntimeException ex
+                     (if (.startsWith (or (.getMessage ex) "") "EOF while reading")
+                       ::eof
+                       (throw ex))))]
+        (if (= ::eof form)
+          forms
+          (recur (conj forms form)))))))
+
 (defn- ns-form?
   [form]
   (and (seq? form)
@@ -36,6 +52,20 @@
     (when (ns-form? form)
       (str (second form)))))
 
+(def polymorphic-defs
+  #{"defprotocol" "defmulti" "definterface"})
+
+(defn- polymorphic-module?
+  [path]
+  (try
+    (some (fn [form]
+            (and (seq? form)
+                 (symbol? (first form))
+                 (contains? polymorphic-defs (name (first form)))))
+          (read-all-forms path))
+    (catch RuntimeException _
+      false)))
+
 (defn build-module-graph
   [project-path source-paths]
   (let [files (scan/discover-source-files project-path source-paths)
@@ -45,6 +75,10 @@
                                    :when module]
                                [f module]))
         nodes (set (vals module-by-file))
+        abstract-modules (set
+                          (for [[file module] module-by-file
+                                :when (polymorphic-module? file)]
+                            module))
         edges (set
                (mapcat (fn [[file from]]
                          (let [deps (dependency-symbols (read-first-form file))]
@@ -52,4 +86,5 @@
                                  :when (contains? nodes to)]
                              {:from from :to to})))
                        module-by-file))]
-    (graph/make-graph nodes edges)))
+    (merge (graph/make-graph nodes edges)
+           {:abstract-modules abstract-modules})))

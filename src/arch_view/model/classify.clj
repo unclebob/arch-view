@@ -14,9 +14,11 @@
         (rule-patterns rule)))
 
 (defn- module-kind
-  [guidance module]
+  [guidance module abstract-modules]
   (let [rules (:component-rules guidance)]
-    (or (some (fn [rule]
+    (or (when (contains? abstract-modules module)
+          :abstract)
+        (some (fn [rule]
                 (when (matches-rule? module rule)
                   (:kind rule)))
               rules)
@@ -24,11 +26,12 @@
 
 (defn classify-edges
   [guidance graph]
-  (->> (:edges graph)
-       (map (fn [{:keys [from to]}]
-              {:from from
-               :to to
-               :type (if (= :abstract (module-kind guidance to))
-                       :abstract
-                       :direct)}))
-       set))
+  (let [abstract-modules (or (:abstract-modules graph) #{})]
+    (->> (:edges graph)
+         (map (fn [{:keys [from to]}]
+                {:from from
+                 :to to
+                 :type (if (= :abstract (module-kind guidance to abstract-modules))
+                         :abstract
+                         :direct)}))
+         set)))

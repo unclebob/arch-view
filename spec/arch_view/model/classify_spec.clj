@@ -12,4 +12,13 @@
           classified (sut/classify-edges guidance graph)]
       (should= #{{:from "my.app.impl.core" :to "my.app.api.port" :type :abstract}
                  {:from "my.app.impl.core" :to "my.app.util" :type :direct}}
+               classified)))
+
+  (it "marks dependencies as abstract when target module is polymorphic"
+    (let [guidance {:component-rules []}
+          graph {:nodes #{"my.app.impl.core" "my.app.port.api"}
+                 :edges #{{:from "my.app.impl.core" :to "my.app.port.api"}}
+                 :abstract-modules #{"my.app.port.api"}}
+          classified (sut/classify-edges guidance graph)]
+      (should= #{{:from "my.app.impl.core" :to "my.app.port.api" :type :abstract}}
                classified))))
