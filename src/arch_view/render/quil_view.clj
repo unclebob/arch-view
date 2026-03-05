@@ -343,23 +343,26 @@
     (q/line sx sy ex ey)
     (draw-arrowhead sx sy tx ty arrowhead)))
 
-(defn- clamp-point
-  [[x y] {:keys [min-x max-x min-y max-y]}]
-  [(-> x double (max min-x) (min max-x))
-   (-> y double (max min-y) (min max-y))])
+(defn- clamp-offset
+  [offset p1 p2 min-v max-v]
+  (let [lo (max (- min-v p1) (- min-v p2))
+        hi (min (- max-v p1) (- max-v p2))]
+    (-> offset double (max lo) (min hi))))
 
 (defn- draw-edge
   [points bounds {:keys [from to from-point to-point arrowhead preserve-endpoints? parallel-offset-x parallel-offset-y]}]
-  (let [offset-x (double (or parallel-offset-x 0.0))
-        offset-y (double (or parallel-offset-y 0.0))
+  (let [raw-offset-x (double (or parallel-offset-x 0.0))
+        raw-offset-y (double (or parallel-offset-y 0.0))
         [x1 y1] (or from-point (let [{x :x y :y} (get points from)] [x y]))
         [x2 y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))
+        offset-x (clamp-offset raw-offset-x x1 x2 (:min-x bounds) (:max-x bounds))
+        offset-y (clamp-offset raw-offset-y y1 y2 (:min-y bounds) (:max-y bounds))
         x1 (+ (double x1) offset-x)
         x2 (+ (double x2) offset-x)
         y1 (+ (double y1) offset-y)
         y2 (+ (double y2) offset-y)
-        [x1 y1] (clamp-point [x1 y1] bounds)
-        [x2 y2] (clamp-point [x2 y2] bounds)]
+        [x1 y1] [x1 y1]
+        [x2 y2] [x2 y2]]
     (when (and x1 y1 x2 y2)
       (if preserve-endpoints?
         (let [[ex ey] (edge-line-endpoint x1 y1 x2 y2 arrowhead)]
@@ -458,12 +461,8 @@
                       horizontal? (>= (Math/abs (- x2 x1))
                                       (Math/abs (- y2 y1)))]
                   (assoc edge
-                         :from-point (if horizontal?
-                                       [x1 (+ y1 offset)]
-                                       [(+ x1 offset) y1])
-                         :to-point (if horizontal?
-                                     [x2 (+ y2 offset)]
-                                     [(+ x2 offset) y2]))))
+                         :parallel-offset-x (if horizontal? 0.0 offset)
+                         :parallel-offset-y (if horizontal? offset 0.0))))
               edges)))))
 
 (defn declutter-edge-drawables

@@ -331,14 +331,12 @@
                                   {:from "c" :to "d" :type :direct :arrowhead :standard}]}
           edges (sort-by :from (sut/layer-edge-drawables scene))
           [e1 e2] edges
-          [x1 _] (:from-point e1)
-          [x2 _] (:from-point e2)
-          [tx1 _] (:to-point e1)
-          [tx2 _] (:to-point e2)]
+          o1 (or (:parallel-offset-x e1) (:parallel-offset-y e1))
+          o2 (or (:parallel-offset-x e2) (:parallel-offset-y e2))]
       (should= 2 (count edges))
-      (should= 15.0 (Math/abs (- x1 x2)))
-      (should= x1 tx1)
-      (should= x2 tx2)))
+      (should-not= nil o1)
+      (should-not= nil o2)
+      (should= 15.0 (Math/abs (- o1 o2)))))
 
   (it "cycles declutter mode when declutter button is clicked"
     (let [state {:scene {:module-positions [] :layer-rects [] :edge-drawables []}
