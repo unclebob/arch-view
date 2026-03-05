@@ -34,12 +34,16 @@
         (should= 1 (count (get-in architecture [:scene :edge-drawables]))))))
 
   (it "parses cli options with no-gui flag"
-    (should= {:project-path "/tmp/demo" :no-gui true :out nil}
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :out nil}
              (sut/parse-args ["--project-path" "/tmp/demo" "--no-gui"])))
 
   (it "parses output file option"
-    (should= {:project-path "/tmp/demo" :no-gui true :out "/tmp/scene.edn"}
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :out "/tmp/scene.edn"}
              (sut/parse-args ["--project-path" "/tmp/demo" "--no-gui" "--out" "/tmp/scene.edn"])))
+
+  (it "parses in-edn option"
+    (should= {:project-path "." :in-edn "/tmp/demo.edn" :no-gui true :out nil}
+             (sut/parse-args ["--in-edn" "/tmp/demo.edn" "--no-gui"])))
 
   (it "does not invoke quil rendering when --no-gui is present"
     (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-cli" (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -105,4 +109,32 @@
       (with-redefs [render/show! (fn [& _] nil)]
         (sut/-main "--project-path" (.getAbsolutePath root) "--no-gui" "--out" (.getAbsolutePath out-file)))
       (should= true (.exists out-file))
-      (should-not= nil (re-find #"classified-edges" (slurp out-file))))))
+      (should-not= nil (re-find #"classified-edges" (slurp out-file)))))
+
+  (it "loads architecture directly from edn input file"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-in-edn" (make-array java.nio.file.attribute.FileAttribute 0)))
+          in-file (java.io.File. root "input.edn")
+          architecture {:graph {:nodes #{"a" "b" "c"}
+                                :edges #{{:from "a" :to "b"} {:from "a" :to "c"}}}
+                        :layout {:layers [{:index 0 :modules ["b" "c"]}
+                                          {:index 1 :modules ["a"]}]
+                                 :module->layer {"a" 1 "b" 0 "c" 0}}
+                        :classified-edges #{{:from "a" :to "b" :type :direct}
+                                            {:from "a" :to "c" :type :abstract}}
+                        :module->component {"a" :api "b" :impl "c" :port}}
+          showed? (atom false)
+          waited? (atom false)
+          exited? (atom false)]
+      (spit in-file (pr-str architecture))
+      (with-redefs [render/show! (fn [scene _]
+                                   (when (= 2 (count (:edge-drawables scene)))
+                                     (reset! showed? true))
+                                   :fake-sketch)
+                    render/wait-until-closed! (fn [sketch]
+                                                (when (= :fake-sketch sketch)
+                                                  (reset! waited? true)))
+                    sut/exit-program! (fn [] (reset! exited? true))]
+        (sut/-main "--in-edn" (.getAbsolutePath in-file)))
+      (should= true @showed?)
+      (should= true @waited?)
+      (should= true @exited?))))

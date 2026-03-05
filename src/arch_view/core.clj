@@ -1,5 +1,6 @@
 (ns arch-view.core
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [arch-view.input.dependency-checker :as checker]
             [arch-view.input.dependency-extract :as extract]
@@ -29,16 +30,26 @@
      :classified-edges classified-edges
      :scene scene}))
 
+(defn load-architecture-edn
+  [path]
+  (let [architecture (-> path slurp edn/read-string)]
+    (if (:scene architecture)
+      architecture
+      (assoc architecture
+             :scene (render/build-scene architecture)))))
+
 (defn parse-args
   [args]
   (loop [remaining args
-         opts {:project-path "." :no-gui false :out nil}]
+         opts {:project-path "." :in-edn nil :no-gui false :out nil}]
     (if (empty? remaining)
       opts
       (let [arg (first remaining)]
         (cond
           (= "--project-path" arg) (recur (nnext remaining)
                                           (assoc opts :project-path (second remaining)))
+          (= "--in-edn" arg) (recur (nnext remaining)
+                                    (assoc opts :in-edn (second remaining)))
           (= "--out" arg) (recur (nnext remaining)
                                  (assoc opts :out (second remaining)))
           (= "--no-gui" arg) (recur (next remaining)
@@ -51,8 +62,10 @@
   (System/exit 0))
 
 (defn -main [& args]
-  (let [{:keys [project-path no-gui out]} (parse-args args)
-        architecture (load-architecture project-path)
+  (let [{:keys [project-path in-edn no-gui out]} (parse-args args)
+        architecture (if in-edn
+                       (load-architecture-edn in-edn)
+                       (load-architecture project-path))
         {:keys [graph scene]} architecture]
     (println "Architecture loaded")
     (println "Nodes:" (count (:nodes graph)))

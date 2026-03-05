@@ -1,0 +1,13 @@
+{:graph {:nodes #{"demo.app.api" "demo.app.service" "demo.app.port"}
+         :edges #{{:from "demo.app.api" :to "demo.app.service"}
+                  {:from "demo.app.api" :to "demo.app.port"}}}
+ :layout {:layers [{:index 0 :modules ["demo.app.service" "demo.app.port"]}
+                   {:index 1 :modules ["demo.app.api"]}]
+          :module->layer {"demo.app.api" 1
+                          "demo.app.service" 0
+                          "demo.app.port" 0}}
+ :module->component {"demo.app.api" :api
+                     "demo.app.service" :service
+                     "demo.app.port" :port}
+ :classified-edges #{{:from "demo.app.api" :to "demo.app.service" :type :direct}
+                     {:from "demo.app.api" :to "demo.app.port" :type :abstract}}}
