@@ -1215,15 +1215,28 @@
     (* (double (or scroll-y 0.0))
        (/ (double new-zoom) (double old-zoom)))))
 
+(defn- world-y-at-screen
+  [screen-y scroll-y zoom]
+  (+ (/ (double screen-y) (double zoom))
+     (/ (double (or scroll-y 0.0)) (double zoom))))
+
+(defn- scroll-for-world-y
+  [world-y screen-y zoom]
+  (- (* (double zoom) (double world-y))
+     (double screen-y)))
+
 (defn- apply-zoom-click
   [{:keys [zoom zoom-stack scene viewport-height] :as state} event]
   (if-not (control-down? event)
     nil
-    (case (button-kind event)
-      :right (let [old-z (double (or zoom 1.0))
+    (let [[_ my] (mouse-pos event)
+          old-z (double (or zoom 1.0))
+          b (button-kind event)]
+      (case b
+      :right (let [center-world-y (world-y-at-screen my (:scroll-y state) old-z)
                    new-z (* old-z 1.1)
                    content-height (scaled-content-height scene new-z)
-                   next-scroll (clamp-scroll (scaled-scroll-for-zoom (:scroll-y state) old-z new-z)
+                   next-scroll (clamp-scroll (scroll-for-world-y center-world-y my new-z)
                                              content-height
                                              viewport-height)]
                (assoc state
@@ -1231,17 +1244,26 @@
                       :scroll-y next-scroll
                       :zoom-stack (conj (vec (or zoom-stack []))
                                         {:zoom old-z
+                                         :center-world-y center-world-y
+                                         :screen-y (double my)
                                          :scroll-y (double (or (:scroll-y state) 0.0))})))
       :left (let [stack (vec (or zoom-stack []))]
               (when (seq stack)
-                (let [{prev-z :zoom prev-scroll :scroll-y} (peek stack)
+                (let [{prev-z :zoom prev-scroll :scroll-y center-world-y :center-world-y screen-y :screen-y} (peek stack)
+                      target-screen-y (double (or screen-y my))
                       content-height (scaled-content-height scene prev-z)
-                      next-scroll (clamp-scroll prev-scroll content-height viewport-height)]
+                      centered-scroll (scroll-for-world-y (or center-world-y
+                                                             (world-y-at-screen my (:scroll-y state) old-z))
+                                                         target-screen-y
+                                                         prev-z)
+                      next-scroll (clamp-scroll (or centered-scroll prev-scroll)
+                                                content-height
+                                                viewport-height)]
                   (assoc state
                          :zoom prev-z
                          :scroll-y next-scroll
                          :zoom-stack (pop stack)))))
-      nil)))
+      nil))))
 
 (defn handle-mouse-released
   [{:keys [dragging-scrollbar? suppress-next-click?] :as state} event]
@@ -1250,8 +1272,7 @@
     (if suppress-next-click?
       (assoc state :suppress-next-click? false :dragging-scrollbar? false :drag-offset nil)
       (let [base-state (assoc state :dragging-scrollbar? false :drag-offset nil)]
-        (or (apply-zoom-click base-state event)
-            (apply-toolbar-click base-state event)
+        (or (apply-toolbar-click base-state event)
             (apply-drilldown-click base-state event))))))
 
 (defn handle-mouse-clicked
@@ -1260,8 +1281,7 @@
     state
     (if (:suppress-next-click? state)
       (assoc state :suppress-next-click? false)
-      (or (apply-zoom-click state event)
-          (apply-toolbar-click state event)
+      (or (apply-toolbar-click state event)
           (apply-drilldown-click state event)))))
 
 (defn- namespace-segments

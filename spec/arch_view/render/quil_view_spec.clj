@@ -179,9 +179,11 @@
                  :zoom 1.0
                  :zoom-stack []
                  :scroll-y 120.0
-                 :viewport-height 600}
-          zoomed (sut/handle-mouse-clicked state {:button :right :modifiers [:control]})
-          restored (sut/handle-mouse-clicked zoomed {:button :left :modifiers [:control]})]
+                 :viewport-height 600
+                 :viewport-width 1200
+                 :dragging-scrollbar? false}
+          zoomed (sut/handle-mouse-pressed state {:button :right :modifiers [:control] :x 100.0 :y 200.0})
+          restored (sut/handle-mouse-pressed zoomed {:button :left :modifiers [:control] :x 100.0 :y 200.0})]
       (should= 1.1 (:zoom zoomed))
       (should= 1 (count (:zoom-stack zoomed)))
       (should= 1.0 (:zoom restored))
@@ -192,11 +194,35 @@
                  :zoom 1.0
                  :zoom-stack []
                  :scroll-y 0.0
-                 :viewport-height 600}
+                 :viewport-height 600
+                 :viewport-width 1200
+                 :dragging-scrollbar? false}
           ctrl-mask 128
-          zoomed (sut/handle-mouse-clicked state {:button 3
-                                                  :modifiers ctrl-mask})]
+          zoomed (sut/handle-mouse-pressed state {:button 3
+                                                  :modifiers ctrl-mask
+                                                  :x 40.0
+                                                  :y 80.0})]
       (should= 1.1 (:zoom zoomed))))
+
+  (it "stores zoom center on stack and restores it on unzoom"
+    (let [state {:scene {:layer-rects [{:x 0.0 :y 0.0 :width 100.0 :height 1200.0}]
+                         :module-positions []
+                         :edge-drawables []}
+                 :architecture nil
+                 :namespace-path []
+                 :zoom 1.0
+                 :zoom-stack []
+                 :scroll-y 150.0
+                 :viewport-height 700
+                 :viewport-width 1200
+                 :dragging-scrollbar? false}
+          zoomed (sut/handle-mouse-pressed state {:button 3 :modifiers 128 :x 200.0 :y 300.0})
+          stack-top (peek (:zoom-stack zoomed))
+          restored (sut/handle-mouse-pressed zoomed {:button 1 :modifiers 128 :x 200.0 :y 300.0})]
+      (should= true (contains? stack-top :center-world-y))
+      (should= true (contains? stack-top :screen-y))
+      (should= 1.0 (:zoom restored))
+      (should= 150.0 (:scroll-y restored))))
 
   (it "zooms on ctrl-right mouse pressed and suppresses following click"
     (let [state {:scene {:layer-rects [{:x 0.0 :y 0.0 :width 100.0 :height 1000.0}]
@@ -210,7 +236,7 @@
                  :viewport-height 600
                  :viewport-width 1200
                  :dragging-scrollbar? false}
-          pressed (sut/handle-mouse-pressed state {:button 3 :modifiers 128})
+          pressed (sut/handle-mouse-pressed state {:button 3 :modifiers 128 :x 60.0 :y 80.0})
           clicked (sut/handle-mouse-clicked pressed {:button 3 :modifiers 128})]
       (should= 1.1 (:zoom pressed))
       (should= true (:suppress-next-click? pressed))
