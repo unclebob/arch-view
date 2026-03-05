@@ -20,6 +20,11 @@
                     (filter #(= 2 (:layer %)))
                     (sort-by :x)
                     (mapv :module)))
+      (should= ["a" "c"]
+               (->> (:module-positions scene)
+                    (filter #(= 2 (:layer %)))
+                    (sort-by :x)
+                    (mapv :label)))
       (should= ["layer-0" "layer-1" "layer-2"]
                (mapv :label (:layer-rects scene)))
       (should= #{{:from "a" :to "b" :arrowhead :standard}
@@ -55,6 +60,19 @@
     (should= [100.0 188.0] (sut/dependency-start-point 100 200 100 100))
     (should= [100.0 112.0] (sut/dependency-start-point 100 100 100 200))
     (should= [100.0 100.0] (sut/dependency-start-point 100 100 200 100)))
+
+  (it "abbreviates module names using parent initials"
+    (should= "a.b.module-name" (sut/abbreviate-module-name "alpha.beta.module-name"))
+    (should= "module-name" (sut/abbreviate-module-name "module-name"))
+    (should= "a.b.c.core" (sut/abbreviate-module-name "app.backend.cache.core")))
+
+  (it "finds hovered module by label hitbox"
+    (let [modules [{:module "alpha.beta.core"
+                    :label "a.b.core"
+                    :x 100.0
+                    :y 50.0}]]
+      (should= "alpha.beta.core" (sut/hovered-module modules 100.0 50.0))
+      (should= nil (sut/hovered-module modules 300.0 300.0))))
 
   (it "exits sketch when escape is pressed"
     (let [exited? (atom false)]

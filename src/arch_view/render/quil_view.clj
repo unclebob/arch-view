@@ -1,5 +1,6 @@
 (ns arch-view.render.quil-view
-  (:require [quil.core :as q]
+  (:require [clojure.string :as str]
+            [quil.core :as q]
             [quil.middleware :as m]))
 
 (defn- layer-y
@@ -24,8 +25,19 @@
                    {:module module
                     :layer layer-index
                     :x (* (inc idx) spacing)
-                    :y y})
+                   :y y})
                  modules)))
+
+(defn abbreviate-module-name
+  [module]
+  (let [parts (str/split module #"\.")
+        parent (butlast parts)
+        last-part (last parts)]
+    (if (seq parent)
+      (str (str/join "." (map #(subs % 0 1) parent))
+           "."
+           last-part)
+      module)))
 
 (defn- arrowhead-for
   [edge-type]
@@ -55,6 +67,9 @@
          module-positions (->> layers
                                (mapcat (fn [{:keys [index modules]}]
                                          (module-positions-for-layer index modules canvas-width layer-height layer-gap)))
+                               (map (fn [m]
+                                      (assoc m :label (abbreviate-module-name (:module m))))
+                               )
                                vec)
          edge-drawables (->> (:classified-edges architecture)
                              (map (fn [{:keys [from to type]}]
@@ -144,6 +159,25 @@
       (q/line sx sy ex ey)
       (draw-arrowhead sx sy tx ty arrowhead)))))
 
+(defn- label-hitbox
+  [{:keys [x y label]}]
+  (let [width (* 7.0 (count (or label "")))
+        half-w (/ width 2.0)
+        half-h 7.0]
+    {:left (- x half-w)
+     :right (+ x half-w)
+     :top (- y half-h)
+     :bottom (+ y half-h)}))
+
+(defn hovered-module
+  [module-positions mx my]
+  (some (fn [{:keys [module] :as m}]
+          (let [{:keys [left right top bottom]} (label-hitbox m)]
+            (when (and (<= left mx right)
+                       (<= top my bottom))
+              module)))
+        module-positions))
+
 (defn- draw-scene
   [scene]
   (q/background 250 250 250)
@@ -154,14 +188,25 @@
     (q/fill 45 60 80)
     (q/text-align :left :top)
     (q/text label (+ x 8) (+ y 6)))
-  (doseq [{:keys [x y module]} (:module-positions scene)]
+  (doseq [{:keys [x y label]} (:module-positions scene)]
     (q/fill 15 20 30)
     (q/no-stroke)
     (q/text-align :center :center)
-    (q/text module x y))
-  (let [points (module-point-map scene)]
+    (q/text label x y))
+  (let [points (module-point-map scene)
+        mx (q/mouse-x)
+        my (q/mouse-y)
+        hovered (hovered-module (:module-positions scene) mx my)]
     (doseq [edge (:edge-drawables scene)]
-      (draw-edge points edge))))
+      (draw-edge points edge))
+    (when hovered
+      (q/fill 255 255 225)
+      (q/stroke 80 80 80)
+      (q/rect (+ mx 12) (+ my 12) (+ 12 (* 7 (count hovered))) 20)
+      (q/fill 0 0 0)
+      (q/no-stroke)
+      (q/text-align :left :center)
+      (q/text hovered (+ mx 18) (+ my 22)))))
 
 (defn handle-key-pressed
   [scene event]
