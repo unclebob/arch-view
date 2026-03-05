@@ -585,10 +585,12 @@
       state))))
 
 (defn handle-mouse-released
-  [{:keys [dragging-scrollbar?] :as state} _event]
+  [{:keys [dragging-scrollbar?] :as state} event]
   (if dragging-scrollbar?
     (assoc state :dragging-scrollbar? false :drag-offset nil)
-    (assoc state :dragging-scrollbar? false :drag-offset nil)))
+    (let [base-state (assoc state :dragging-scrollbar? false :drag-offset nil)]
+      (or (apply-toolbar-click base-state event)
+          (apply-drilldown-click base-state event)))))
 
 (defn handle-mouse-clicked
   [state event]
@@ -716,7 +718,6 @@
        :mouse-wheel handle-mouse-wheel
        :mouse-pressed handle-mouse-pressed
        :mouse-dragged handle-mouse-dragged
-       :mouse-clicked handle-mouse-clicked
        :mouse-released handle-mouse-released
         :middleware [m/fun-mode]))))
 
