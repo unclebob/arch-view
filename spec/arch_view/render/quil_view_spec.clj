@@ -1,5 +1,6 @@
 (ns arch-view.render.quil-view-spec
-  (:require [arch-view.render.quil-view :as sut]
+  (:require [clojure.string :as str]
+            [arch-view.render.quil-view :as sut]
             [speclj.core :refer :all]))
 
 (describe "quil scene model"
@@ -357,6 +358,13 @@
         (let [next-state (sut/handle-mouse-clicked state {:x (:x one-pos) :y (:y one-pos)})]
           (should= state next-state)
           (should= "/tmp/one.cljc" @opened)))))
+
+  (it "renders source html with line numbers and preserved indentation"
+    (let [html (#'sut/source->html "/tmp/example.clj" "(ns sample)\n\t(defn x []\n\t  :ok)\n")]
+      (should= true (str/includes? html "class='ln'>1</td>"))
+      (should= true (str/includes? html "class='ln'>2</td>"))
+      (should= true (str/includes? html "<td class='code'><pre>  (defn x []</pre></td>"))
+      (should= true (str/includes? html "<span class='kw'>:ok</span>"))))
 
   (it "back button at top level does nothing"
     (let [state {:scene {:module-positions [] :layer-rects [] :edge-drawables []}
