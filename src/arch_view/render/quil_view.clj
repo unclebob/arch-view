@@ -153,55 +153,60 @@
                  (when (and (number? from-layer)
                             (number? to-layer))
                    [from-layer to-layer]))))
-       set))
+       vec))
 
-(defn- track-cost
-  [assignment pairs]
-  (reduce (fn [cost [from-layer to-layer]]
-            (let [from-track (get assignment from-layer 0)
-                  to-track (get assignment to-layer 0)
-                  horizontal (Math/abs (double (- to-track from-track)))
-                  dy (- to-layer from-layer)]
-              (+ cost
-                 (* 8.0 horizontal)
-                 (* 3.0 horizontal horizontal)
-                 (if (< dy 0) 40.0 0.0)
-                 (if (zero? dy) 12.0 0.0))))
-          0.0
-          pairs))
-
-(defn- optimize-track-assignment
-  [layer-indexes pairs]
-  (let [initial (into {}
-                      (map-indexed (fn [i idx]
-                                     [idx (mod i racetrack-count)])
-                                   layer-indexes))]
-    (loop [assignment initial
-           pass 0]
-      (if (>= pass 12)
-        assignment
-        (let [next-assignment
-              (reduce (fn [acc idx]
-                        (let [current-track (get acc idx 0)
-                              current-cost (track-cost acc pairs)
-                              best-track
-                              (->> (range racetrack-count)
-                                   (map (fn [candidate]
-                                          (let [candidate-map (assoc acc idx candidate)]
-                                            {:track candidate
-                                             :cost (track-cost candidate-map pairs)})))
-                                   (reduce (fn [best option]
-                                             (if (< (:cost option) (:cost best))
-                                               option
-                                               best))
-                                           {:track current-track :cost current-cost})
-                                   :track)]
-                          (assoc acc idx best-track)))
-                      assignment
-                      layer-indexes)]
-          (if (= next-assignment assignment)
-            assignment
-            (recur next-assignment (inc pass))))))))
+(defn- assign-layer-slots
+  [ordered-layer-indexes pairs]
+  (let [pair-index (group-by first pairs)
+        reverse-index (group-by second pairs)]
+    (loop [remaining ordered-layer-indexes
+           placement {}
+           max-row -1]
+      (if (empty? remaining)
+        placement
+        (let [idx (first remaining)
+              candidates (for [row-candidate (range (inc (+ 2 max-row)))
+                               track-candidate (range racetrack-count)
+                               :let [occupied? (some (fn [{:keys [row track]}]
+                                                       (and (= row row-candidate)
+                                                            (= track track-candidate)))
+                                                     (vals placement))]
+                               :when (not occupied?)]
+                           {:row row-candidate :track track-candidate})
+              connection-cost
+              (fn [{:keys [row track]}]
+                (let [outgoing (for [[_ to] (get pair-index idx)
+                                     :let [p (get placement to)]
+                                     :when p]
+                                 [p true])
+                      incoming (for [[from _] (get reverse-index idx)
+                                     :let [p (get placement from)]
+                                     :when p]
+                                 [p false])]
+                  (reduce (fn [cost [{other-row :row other-track :track} as-from?]]
+                            (let [horizontal (Math/abs (double (- track other-track)))
+                                  vertical (Math/abs (double (- row other-row)))
+                                  upward? (if as-from?
+                                            (< other-row row)
+                                            (< row other-row))]
+                              (+ cost
+                                 (* 9.0 horizontal)
+                                 (* 2.0 vertical)
+                                 (if upward? 18.0 0.0))))
+                          0.0
+                          (concat outgoing incoming))))
+              best (reduce (fn [best candidate]
+                             (let [height-cost (* 100.0 (:row candidate))
+                                   score (+ height-cost (connection-cost candidate))]
+                               (if (or (nil? best) (< score (:score best)))
+                                 (assoc candidate :score score)
+                                 best)))
+                           nil
+                           candidates)
+              next-placement (assoc placement idx {:row (:row best) :track (:track best)})]
+          (recur (rest remaining)
+                 next-placement
+                 (max max-row (:row best))))))))
 
 (defn build-scene
   ([architecture]
@@ -210,11 +215,9 @@
                   :or {canvas-width 1200 layer-height 140 layer-gap 24}}]
   (let [layers (get-in architecture [:layout :layers])
          layer-indexes (->> layers (map :index) sort vec)
-         row-by-layer-index (into {}
-                                  (map-indexed (fn [row idx] [idx row]) layer-indexes))
          module->layer (or (get-in architecture [:layout :module->layer]) {})
          layer-pairs (dependency-pairs-by-layer (:classified-edges architecture) module->layer)
-         track-by-layer-index (optimize-track-assignment layer-indexes layer-pairs)
+         placement-by-layer-index (assign-layer-slots layer-indexes layer-pairs)
          module->component (or (:module->component architecture) {})
          layer->label (or (:layer->label architecture) {})
          module->kind (or (:module->kind architecture) {})
@@ -225,9 +228,9 @@
          layer-rects (mapv (fn [{:keys [index]}]
                              (let [modules (get-in architecture [:layout :layers index :modules])
                                    component (dominant-component modules module->component)]
-                               {:index index
-                                :x (track-x-for (get track-by-layer-index index 0) canvas-width)
-                                :y (layer-y (get row-by-layer-index index index) layer-height layer-gap)
+                                {:index index
+                                :x (track-x-for (get-in placement-by-layer-index [index :track] 0) canvas-width)
+                                :y (layer-y (get-in placement-by-layer-index [index :row] index) layer-height layer-gap)
                                 :width (track-width-for canvas-width)
                                 :height layer-height
                                 :full-name (some-> modules first module->full-name strip-top-namespace)
@@ -359,6 +362,18 @@
   (let [module->layer (into {}
                            (map (fn [{:keys [module layer]}] [module layer])
                                 (:module-positions scene)))
+        layer->module-centers (reduce (fn [acc {:keys [layer x y]}]
+                                        (update acc layer (fnil conj []) [x y]))
+                                      {}
+                                      (:module-positions scene))
+        layer-center (fn [layer]
+                       (let [points (get layer->module-centers layer)]
+                         (if (seq points)
+                           (let [count-points (double (count points))
+                                 sum-x (reduce + (map first points))
+                                 sum-y (reduce + (map second points))]
+                             [(/ sum-x count-points) (/ sum-y count-points)])
+                           nil)))
         layer-rects (into {}
                          (map (fn [r] [(:index r) r]) (:layer-rects scene)))
         edges-by-layer (reduce (fn [acc {:keys [from to type]}]
@@ -379,16 +394,16 @@
                         (map (fn [[[from-layer to-layer] type]]
                                (let [{fx :x fy :y fw :width fh :height} (get layer-rects from-layer)
                                      {tx :x ty :y tw :width th :height} (get layer-rects to-layer)
-                                     from-x (+ fx (/ fw 2.0))
-                                     to-x (+ tx (/ tw 2.0))
-                                     down? (> to-layer from-layer)
-                                     from-y (if down? (+ fy fh) fy)
-                                     to-y (if down? ty (+ ty th))]
+                                     [from-x from-y] (or (layer-center from-layer)
+                                                         [(+ fx (/ fw 2.0))
+                                                          (+ fy (/ fh 2.0))])
+                                     [to-x to-y] (or (layer-center to-layer)
+                                                     [(+ tx (/ tw 2.0))
+                                                      (+ ty (/ th 2.0))])]
                                  {:from from-layer
                                   :to to-layer
                                   :from-point [from-x from-y]
                                   :to-point [to-x to-y]
-                                  :preserve-endpoints? true
                                   :type type
                                   :arrowhead (arrowhead-for type)})))
                         (sort-by (juxt :from :to))

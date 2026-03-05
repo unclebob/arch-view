@@ -15,8 +15,7 @@
       (should= [220.0 220.0 220.0]
                (mapv :width (:layer-rects scene)))
       (should= true (every? #(<= 24.0 (:x %)) (:layer-rects scene)))
-      (should= [0 150 300]
-               (mapv :y (:layer-rects scene)))
+      (should= true (every? #(= 0 (:y %)) (:layer-rects scene)))
       (should= ["a" "c"]
                (->> (:module-positions scene)
                     (filter #(= 2 (:layer %)))
@@ -290,8 +289,8 @@
       (should= 1 (count layer-edges))
       (should= :abstract (:type (first layer-edges)))
       (should= :closed-triangle (:arrowhead (first layer-edges)))
-      (should= [200.0 100] (:from-point (first layer-edges)))
-      (should= [200.0 120] (:to-point (first layer-edges)))))
+      (should= 60.0 (second (:from-point (first layer-edges))))
+      (should= 200.0 (second (:to-point (first layer-edges))))))
 
   (it "positions upward layer arrows from top of lower layer to bottom of upper layer"
     (let [scene {:module-positions [{:module "lower" :layer 2 :x 100 :y 300}
@@ -300,14 +299,14 @@
                                {:index 2 :x 0 :y 240 :width 400 :height 100}]
                  :edge-drawables [{:from "lower" :to "upper" :type :direct :arrowhead :standard}]}
           edge (first (sut/layer-edge-drawables scene))]
-      (should= [200.0 240] (:from-point edge))
-      (should= [200.0 220] (:to-point edge))))
+      (should= 300.0 (second (:from-point edge)))
+      (should= 180.0 (second (:to-point edge)))))
 
   (it "separates overlapping layer arrows by 15px"
     (let [scene {:module-positions [{:module "a" :layer 0 :x 100 :y 60}
-                                    {:module "b" :layer 2 :x 120 :y 300}
-                                    {:module "c" :layer 1 :x 140 :y 180}
-                                    {:module "d" :layer 3 :x 160 :y 420}]
+                                    {:module "b" :layer 2 :x 100 :y 300}
+                                    {:module "c" :layer 1 :x 100 :y 180}
+                                    {:module "d" :layer 3 :x 100 :y 420}]
                  :layer-rects [{:index 0 :x 0 :y 0 :width 400 :height 100}
                                {:index 1 :x 0 :y 120 :width 400 :height 100}
                                {:index 2 :x 0 :y 240 :width 400 :height 100}
