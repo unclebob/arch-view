@@ -337,9 +337,13 @@
       :else [(double x1) (double y1)])))
 
 (defn- draw-arrow-between-points
-  [x1 y1 x2 y2 arrowhead]
-  (let [[sx sy] (dependency-start-point x1 y1 x2 y2)
-        [tx ty] (dependency-tip-point x1 y1 x2 y2)
+  [x1 y1 x2 y2 arrowhead use-label-clearance?]
+  (let [[sx sy] (if use-label-clearance?
+                  (dependency-start-point x1 y1 x2 y2)
+                  [(double x1) (double y1)])
+        [tx ty] (if use-label-clearance?
+                  (dependency-tip-point x1 y1 x2 y2)
+                  [(double x2) (double y2)])
         [ex ey] (edge-line-endpoint sx sy tx ty arrowhead)]
     (if (= :closed-triangle arrowhead)
       (q/stroke 0 128 0)
@@ -353,20 +357,50 @@
         hi (min (- max-v p1) (- max-v p2))]
     (-> offset double (max lo) (min hi))))
 
+(defn- rect-center
+  [{:keys [x y width height]}]
+  [(+ x (/ width 2.0))
+   (+ y (/ height 2.0))])
+
+(defn- clamp-between
+  [v lo hi]
+  (-> v double (max lo) (min hi)))
+
+(defn- rect-edge-anchor
+  [{:keys [x y width height] :as rect} tx ty]
+  (let [[cx cy] (rect-center rect)
+        dx (- tx cx)
+        dy (- ty cy)
+        right (+ x width)
+        bottom (+ y height)]
+    (if (>= (Math/abs dx) (Math/abs dy))
+      (if (>= dx 0.0)
+        [right (clamp-between ty y bottom)]
+        [x (clamp-between ty y bottom)])
+      (if (>= dy 0.0)
+        [(clamp-between tx x right) bottom]
+        [(clamp-between tx x right) y]))))
+
 (defn- draw-edge
-  [points bounds {:keys [from to from-point to-point arrowhead preserve-endpoints? parallel-offset-x parallel-offset-y]}]
-  (let [raw-offset-x (double (or parallel-offset-x 0.0))
+  [points bounds {:keys [from to from-point to-point from-rect to-rect arrowhead preserve-endpoints? parallel-offset-x parallel-offset-y]}]
+  (let [
+        raw-offset-x (double (or parallel-offset-x 0.0))
         raw-offset-y (double (or parallel-offset-y 0.0))
-        [x1 y1] (or from-point (let [{x :x y :y} (get points from)] [x y]))
-        [x2 y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))
+        [base-x1 base-y1] (or from-point (let [{x :x y :y} (get points from)] [x y]))
+        [base-x2 base-y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))
+        [x1 y1] (if from-rect
+                  (rect-edge-anchor from-rect base-x2 base-y2)
+                  [base-x1 base-y1])
+        [x2 y2] (if to-rect
+                  (rect-edge-anchor to-rect x1 y1)
+                  [base-x2 base-y2])
         offset-x (clamp-offset raw-offset-x x1 x2 (:min-x bounds) (:max-x bounds))
         offset-y (clamp-offset raw-offset-y y1 y2 (:min-y bounds) (:max-y bounds))
         x1 (+ (double x1) offset-x)
         x2 (+ (double x2) offset-x)
         y1 (+ (double y1) offset-y)
         y2 (+ (double y2) offset-y)
-        [x1 y1] [x1 y1]
-        [x2 y2] [x2 y2]]
+        anchored? (or from-rect to-rect)]
     (when (and x1 y1 x2 y2)
       (if preserve-endpoints?
         (let [[ex ey] (edge-line-endpoint x1 y1 x2 y2 arrowhead)]
@@ -375,7 +409,7 @@
             (q/stroke 0 0 0))
           (q/line x1 y1 ex ey)
           (draw-arrowhead x1 y1 x2 y2 arrowhead))
-        (draw-arrow-between-points x1 y1 x2 y2 arrowhead)))))
+        (draw-arrow-between-points x1 y1 x2 y2 arrowhead (not anchored?))))))
 
 (defn layer-edge-drawables
   [scene]
@@ -702,7 +736,19 @@
     (q/text-align :center :center)
     (q/text (rendered-label module-position) x y))
   (let [points (module-point-map scene)
-        edge-drawables (declutter-edge-drawables scene declutter-mode)
+        layer-rect-by-index (into {} (map (juxt :index identity) (:layer-rects scene)))
+        module->layer (into {} (map (juxt :module :layer) (:module-positions scene)))
+        edge-drawables (->> (declutter-edge-drawables scene declutter-mode)
+                            (mapv (fn [{:keys [from to] :as edge}]
+                                    (let [from-layer (if (number? from)
+                                                       from
+                                                       (get module->layer from))
+                                          to-layer (if (number? to)
+                                                     to
+                                                     (get module->layer to))]
+                                      (assoc edge
+                                             :from-rect (get layer-rect-by-index from-layer)
+                                             :to-rect (get layer-rect-by-index to-layer))))))
         spaced-edges (if (= :between-layers declutter-mode)
                        edge-drawables
                        (apply-parallel-arrow-spacing edge-drawables points))
