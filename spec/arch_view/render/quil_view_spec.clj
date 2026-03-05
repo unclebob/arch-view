@@ -356,6 +356,18 @@
       (should= true (:leaf? one-node))
       (should= "/tmp/one.cljc" (:source-file one-node))))
 
+  (it "marks namespace as abstract when any descendant module is abstract"
+    (let [architecture {:graph {:nodes #{"empire.alpha.one.impl"
+                                         "empire.alpha.two"}
+                                :edges #{}
+                                :abstract-modules #{"empire.alpha.one.impl"}
+                                :module->source-file {"empire.alpha.one.impl" "/tmp/impl.cljc"
+                                                      "empire.alpha.two" "/tmp/two.cljc"}}
+                        :classified-edges #{}}
+          root-view (sut/view-architecture architecture [])
+          alpha-node (some #(when (= "alpha" (:module %)) %) (:module-positions (sut/build-scene root-view)))]
+      (should= :abstract (:kind alpha-node))))
+
   (it "opens source window when leaf node is clicked"
     (let [opened (atom nil)
           architecture {:graph {:nodes #{"empire.alpha.one"}

@@ -471,8 +471,10 @@
     (q/fill 45 60 80)
     (q/text-align :left :top)
     (q/text label (+ x 8) (+ y 6)))
-  (doseq [{:keys [x y] :as module-position} (:module-positions scene)]
-    (q/fill 15 20 30)
+  (doseq [{:keys [x y kind] :as module-position} (:module-positions scene)]
+    (if (= :abstract kind)
+      (q/fill 0 128 0)
+      (q/fill 15 20 30))
     (q/no-stroke)
     (q/text-align :center :center)
     (q/text (rendered-label module-position) x y))
