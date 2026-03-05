@@ -115,6 +115,11 @@
   (it "omits scrollbar when content fits viewport"
     (should= nil (sut/scrollbar-rect 400 500 0 1200)))
 
+  (it "maps scrollbar thumb y back to scroll offset"
+    (should= 0.0 (sut/thumb-y->scroll 12.0 2000 500))
+    (should= true (> (sut/thumb-y->scroll 300.0 2000 500) 0.0))
+    (should= 1500.0 (sut/thumb-y->scroll 10000.0 2000 500)))
+
   (it "exits sketch when escape is pressed"
     (let [exited? (atom false)]
       (with-redefs [quil.core/exit (fn [] (reset! exited? true))]

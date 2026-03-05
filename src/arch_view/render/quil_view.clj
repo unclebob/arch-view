@@ -236,6 +236,30 @@
        :width 8.0
        :height thumb-height})))
 
+(defn- point-in-rect?
+  [{:keys [x y width height]} px py]
+  (and (<= x px (+ x width))
+       (<= y py (+ y height))))
+
+(defn- content-height-for-scene
+  [scene]
+  (->> (:layer-rects scene)
+       (map (fn [{:keys [y height]}] (+ y height)))
+       (apply max 0)
+       (+ 40)))
+
+(defn thumb-y->scroll
+  [thumb-y content-height viewport-height]
+  (if (<= content-height viewport-height)
+    0.0
+    (let [track-height (- (double viewport-height) 24.0)
+          ratio (/ (double viewport-height) (double content-height))
+          thumb-height (max 30.0 (* track-height ratio))
+          max-scroll (scroll-range content-height viewport-height)
+          max-thumb-travel (max 1.0 (- track-height thumb-height))
+          normalized (/ (- thumb-y 12.0) max-thumb-travel)]
+      (clamp-scroll (* normalized max-scroll) content-height viewport-height))))
+
 (defn- draw-scene-content
   [scene]
   (q/background 250 250 250)
@@ -276,10 +300,7 @@
 
 (defn- draw-scene
   [{:keys [scene scroll-y viewport-height viewport-width]}]
-  (let [content-height (->> (:layer-rects scene)
-                            (map (fn [{:keys [y height]}] (+ y height)))
-                            (apply max 0)
-                            (+ 40))
+  (let [content-height (content-height-for-scene scene)
         mx (double (q/mouse-x))
         my (double (q/mouse-y))
         world-my (+ my scroll-y)
@@ -301,16 +322,47 @@
 
 (defn handle-mouse-wheel
   [{:keys [scene scroll-y viewport-height viewport-width] :as state} event]
-  (let [content-height (->> (:layer-rects scene)
-                            (map (fn [{:keys [y height]}] (+ y height)))
-                            (apply max 0)
-                            (+ 40))
-        delta (* 30.0 (double (or (:count event) 0)))
+  (let [content-height (content-height-for-scene scene)
+        units (cond
+                (number? event) (double event)
+                (map? event) (double (or (:count event)
+                                         (:amount event)
+                                         (:rotation event)
+                                         (:wheel-rotation event)
+                                         0))
+                :else 0.0)
+        delta (* 30.0 units)
         next-scroll (clamp-scroll (+ scroll-y delta) content-height viewport-height)]
     (assoc state
            :scroll-y next-scroll
            :viewport-height viewport-height
            :viewport-width viewport-width)))
+
+(defn handle-mouse-pressed
+  [{:keys [scene scroll-y viewport-height viewport-width] :as state} _]
+  (let [content-height (content-height-for-scene scene)
+        thumb (scrollbar-rect content-height viewport-height scroll-y viewport-width)
+        mx (double (q/mouse-x))
+        my (double (q/mouse-y))]
+    (if (and thumb (point-in-rect? thumb mx my))
+      (assoc state
+             :dragging-scrollbar? true
+             :drag-offset (- my (:y thumb)))
+      state)))
+
+(defn handle-mouse-dragged
+  [{:keys [scene viewport-height dragging-scrollbar? drag-offset] :as state} _]
+  (if-not dragging-scrollbar?
+    state
+    (let [content-height (content-height-for-scene scene)
+          mouse-y (double (q/mouse-y))
+          thumb-y (- mouse-y (double (or drag-offset 0)))
+          next-scroll (thumb-y->scroll thumb-y content-height viewport-height)]
+      (assoc state :scroll-y next-scroll))))
+
+(defn handle-mouse-released
+  [state _]
+  (assoc state :dragging-scrollbar? false :drag-offset nil))
 
 (defn show!
   ([scene]
@@ -333,11 +385,16 @@
        :setup (fn []
                 {:scene scene
                  :scroll-y 0.0
+                 :dragging-scrollbar? false
+                 :drag-offset nil
                  :viewport-height viewport-height
                  :viewport-width width})
        :draw draw-scene
        :key-pressed handle-key-pressed
        :mouse-wheel handle-mouse-wheel
+       :mouse-pressed handle-mouse-pressed
+       :mouse-dragged handle-mouse-dragged
+       :mouse-released handle-mouse-released
        :middleware [m/fun-mode]))))
 
 (defn wait-until-closed!
