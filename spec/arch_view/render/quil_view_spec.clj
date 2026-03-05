@@ -51,6 +51,11 @@
     (should= [100.0 188.0] (sut/dependency-tip-point 100 100 100 200))
     (should= [100.0 100.0] (sut/dependency-tip-point 200 100 100 100)))
 
+  (it "offsets source start by direction to avoid label overlap"
+    (should= [100.0 188.0] (sut/dependency-start-point 100 200 100 100))
+    (should= [100.0 112.0] (sut/dependency-start-point 100 100 100 200))
+    (should= [100.0 100.0] (sut/dependency-start-point 100 100 200 100)))
+
   (it "exits sketch when escape is pressed"
     (let [exited? (atom false)]
       (with-redefs [quil.core/exit (fn [] (reset! exited? true))]

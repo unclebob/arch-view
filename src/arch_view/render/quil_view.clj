@@ -124,16 +124,25 @@
       (< dy -0.1) [(double x2) (+ (double y2) label-clearance)]
       :else [(double x2) (double y2)])))
 
+(defn dependency-start-point
+  [x1 y1 x2 y2]
+  (let [dy (- y2 y1)]
+    (cond
+      (> dy 0.1) [(double x1) (+ (double y1) label-clearance)]
+      (< dy -0.1) [(double x1) (- (double y1) label-clearance)]
+      :else [(double x1) (double y1)])))
+
 (defn- draw-edge
   [points {:keys [from to arrowhead]}]
   (let [{x1 :x y1 :y} (get points from)
         {x2 :x y2 :y} (get points to)]
     (when (and x1 y1 x2 y2)
-      (let [[tx ty] (dependency-tip-point x1 y1 x2 y2)
-            [ex ey] (edge-line-endpoint x1 y1 tx ty arrowhead)]
+      (let [[sx sy] (dependency-start-point x1 y1 x2 y2)
+            [tx ty] (dependency-tip-point x1 y1 x2 y2)
+            [ex ey] (edge-line-endpoint sx sy tx ty arrowhead)]
       (q/stroke 40 40 40)
-      (q/line x1 y1 ex ey)
-      (draw-arrowhead x1 y1 tx ty arrowhead)))))
+      (q/line sx sy ex ey)
+      (draw-arrowhead sx sy tx ty arrowhead)))))
 
 (defn- draw-scene
   [scene]
