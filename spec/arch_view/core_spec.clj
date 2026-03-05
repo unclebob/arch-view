@@ -50,4 +50,16 @@
       (spit b-file "(ns my.app.b)")
       (with-redefs [render/show! (fn [& _] (reset! called? true))]
         (sut/-main "--project-path" (.getAbsolutePath root) "--no-gui"))
-      (should= false @called?))))
+      (should= false @called?)))
+
+  (it "falls back to default guidance when dependency-checker.edn is missing"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-no-guide" (make-array java.nio.file.attribute.FileAttribute 0)))
+          src-dir (doto (java.io.File. root "src") .mkdirs)
+          a-file (java.io.File. src-dir "my/app/a.clj")
+          b-file (java.io.File. src-dir "my/app/b.clj")]
+      (.mkdirs (.getParentFile a-file))
+      (spit a-file "(ns my.app.a (:require [my.app.b :as b]))")
+      (spit b-file "(ns my.app.b)")
+      (let [architecture (sut/load-architecture (.getAbsolutePath root))]
+        (should= ["src"] (get-in architecture [:guidance :source-paths]))
+        (should= #{"my.app.a" "my.app.b"} (get-in architecture [:graph :nodes]))))))

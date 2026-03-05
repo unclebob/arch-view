@@ -10,8 +10,10 @@
 
 (defn load-architecture
   [project-path]
-  (let [guidance-path (.getAbsolutePath (io/file project-path "dependency-checker.edn"))
-        guidance (checker/read-guidance guidance-path)
+  (let [guidance-file (io/file project-path "dependency-checker.edn")
+        guidance (if (.exists guidance-file)
+                   (checker/read-guidance (.getAbsolutePath guidance-file))
+                   {:source-paths ["src"] :component-rules []})
         source-paths (or (:source-paths guidance) ["src"])
         graph (extract/build-module-graph project-path source-paths)
         module->component (components/assign-components guidance (:nodes graph))
