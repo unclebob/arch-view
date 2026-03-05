@@ -247,7 +247,19 @@
           layer-edges (sut/layer-edge-drawables scene)]
       (should= 1 (count layer-edges))
       (should= :abstract (:type (first layer-edges)))
-      (should= :closed-triangle (:arrowhead (first layer-edges)))))
+      (should= :closed-triangle (:arrowhead (first layer-edges)))
+      (should= [200.0 100] (:from-point (first layer-edges)))
+      (should= [200.0 120] (:to-point (first layer-edges)))))
+
+  (it "positions upward layer arrows from top of lower layer to bottom of upper layer"
+    (let [scene {:module-positions [{:module "lower" :layer 2 :x 100 :y 300}
+                                    {:module "upper" :layer 1 :x 120 :y 180}]
+                 :layer-rects [{:index 1 :x 0 :y 120 :width 400 :height 100}
+                               {:index 2 :x 0 :y 240 :width 400 :height 100}]
+                 :edge-drawables [{:from "lower" :to "upper" :type :direct :arrowhead :standard}]}
+          edge (first (sut/layer-edge-drawables scene))]
+      (should= [200.0 240] (:from-point edge))
+      (should= [200.0 220] (:to-point edge))))
 
   (it "cycles declutter mode when declutter button is clicked"
     (let [state {:scene {:module-positions [] :layer-rects [] :edge-drawables []}

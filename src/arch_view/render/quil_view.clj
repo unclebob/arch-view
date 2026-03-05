@@ -244,11 +244,18 @@
     (draw-arrowhead sx sy tx ty arrowhead)))
 
 (defn- draw-edge
-  [points {:keys [from to from-point to-point arrowhead]}]
+  [points {:keys [from to from-point to-point arrowhead preserve-endpoints?]}]
   (let [[x1 y1] (or from-point (let [{x :x y :y} (get points from)] [x y]))
         [x2 y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))]
     (when (and x1 y1 x2 y2)
-      (draw-arrow-between-points x1 y1 x2 y2 arrowhead))))
+      (if preserve-endpoints?
+        (let [[ex ey] (edge-line-endpoint x1 y1 x2 y2 arrowhead)]
+          (if (= :closed-triangle arrowhead)
+            (q/stroke 0 128 0)
+            (q/stroke 0 0 0))
+          (q/line x1 y1 ex ey)
+          (draw-arrowhead x1 y1 x2 y2 arrowhead))
+        (draw-arrow-between-points x1 y1 x2 y2 arrowhead)))))
 
 (defn layer-edge-drawables
   [scene]
@@ -284,6 +291,7 @@
                    :to to-layer
                    :from-point [from-x from-y]
                    :to-point [to-x to-y]
+                   :preserve-endpoints? true
                    :type type
                    :arrowhead (arrowhead-for type)})))
          vec)))
