@@ -21,14 +21,14 @@
        ffirst))
 
 (defn- module-positions-for-layer
-  [layer-index modules canvas-width layer-height layer-gap module->kind module->full-name]
+  [layer-index modules layer-rect module->kind module->full-name]
   (let [count-modules (count modules)
-        spacing (/ canvas-width (inc count-modules))
-        y (+ (layer-y layer-index layer-height layer-gap) (/ layer-height 2))]
+        spacing (/ (:width layer-rect) (inc count-modules))
+        y (+ (:y layer-rect) (/ (:height layer-rect) 2))]
     (map-indexed (fn [idx module]
                    {:module module
                     :layer layer-index
-                    :x (* (inc idx) spacing)
+                    :x (+ (:x layer-rect) (* (inc idx) spacing))
                     :y y
                     :kind (or (get module->kind module) :concrete)
                     :full-name (or (get module->full-name module) module)})
@@ -128,12 +128,93 @@
     :closed-triangle
     :standard))
 
+(def ^:private racetrack-count 4)
+(def ^:private racetrack-margin 24.0)
+(def ^:private racetrack-gap 24.0)
+
+(defn- track-width-for
+  [canvas-width]
+  (/ (- (double canvas-width)
+        (* 2.0 racetrack-margin)
+        (* (dec racetrack-count) racetrack-gap))
+     racetrack-count))
+
+(defn- track-x-for
+  [track canvas-width]
+  (+ racetrack-margin
+     (* track (+ (track-width-for canvas-width) racetrack-gap))))
+
+(defn- dependency-pairs-by-layer
+  [classified-edges module->layer]
+  (->> classified-edges
+       (keep (fn [{:keys [from to]}]
+               (let [from-layer (get module->layer from)
+                     to-layer (get module->layer to)]
+                 (when (and (number? from-layer)
+                            (number? to-layer))
+                   [from-layer to-layer]))))
+       set))
+
+(defn- track-cost
+  [assignment pairs]
+  (reduce (fn [cost [from-layer to-layer]]
+            (let [from-track (get assignment from-layer 0)
+                  to-track (get assignment to-layer 0)
+                  horizontal (Math/abs (double (- to-track from-track)))
+                  dy (- to-layer from-layer)]
+              (+ cost
+                 (* 8.0 horizontal)
+                 (* 3.0 horizontal horizontal)
+                 (if (< dy 0) 40.0 0.0)
+                 (if (zero? dy) 12.0 0.0))))
+          0.0
+          pairs))
+
+(defn- optimize-track-assignment
+  [layer-indexes pairs]
+  (let [initial (into {}
+                      (map-indexed (fn [i idx]
+                                     [idx (mod i racetrack-count)])
+                                   layer-indexes))]
+    (loop [assignment initial
+           pass 0]
+      (if (>= pass 12)
+        assignment
+        (let [next-assignment
+              (reduce (fn [acc idx]
+                        (let [current-track (get acc idx 0)
+                              current-cost (track-cost acc pairs)
+                              best-track
+                              (->> (range racetrack-count)
+                                   (map (fn [candidate]
+                                          (let [candidate-map (assoc acc idx candidate)]
+                                            {:track candidate
+                                             :cost (track-cost candidate-map pairs)})))
+                                   (reduce (fn [best option]
+                                             (if (< (:cost option) (:cost best))
+                                               option
+                                               best))
+                                           {:track current-track :cost current-cost})
+                                   :track)]
+                          (assoc acc idx best-track)))
+                      assignment
+                      layer-indexes)]
+          (if (= next-assignment assignment)
+            assignment
+            (recur next-assignment (inc pass))))))))
+
 (defn build-scene
   ([architecture]
    (build-scene architecture {}))
   ([architecture {:keys [canvas-width layer-height layer-gap]
                   :or {canvas-width 1200 layer-height 140 layer-gap 24}}]
   (let [layers (get-in architecture [:layout :layers])
+         layer-indexes (->> layers (map :index) sort vec)
+         row-by-layer-index (into {}
+                                  (map-indexed (fn [row idx] [idx row]) layer-indexes))
+         module->layer (or (get-in architecture [:layout :module->layer]) {})
+         layer-pairs (dependency-pairs-by-layer (:classified-edges architecture) module->layer)
+         track-by-layer-index (optimize-track-assignment layer-indexes layer-pairs)
          module->component (or (:module->component architecture) {})
          layer->label (or (:layer->label architecture) {})
          module->kind (or (:module->kind architecture) {})
@@ -145,9 +226,9 @@
                              (let [modules (get-in architecture [:layout :layers index :modules])
                                    component (dominant-component modules module->component)]
                                {:index index
-                                :x 0
-                                :y (layer-y index layer-height layer-gap)
-                                :width canvas-width
+                                :x (track-x-for (get track-by-layer-index index 0) canvas-width)
+                                :y (layer-y (get row-by-layer-index index index) layer-height layer-gap)
+                                :width (track-width-for canvas-width)
                                 :height layer-height
                                 :full-name (some-> modules first module->full-name strip-top-namespace)
                                 :label (or (get layer->label index)
@@ -155,9 +236,10 @@
                                          (name component)
                                          (str "layer-" index)))}))
                            layers)
+         rect-by-layer (into {} (map (juxt :index identity) layer-rects))
          module-positions (->> layers
                                (mapcat (fn [{:keys [index modules]}]
-                                         (->> (module-positions-for-layer index modules canvas-width layer-height layer-gap module->kind module->full-name)
+                                         (->> (module-positions-for-layer index modules (get rect-by-layer index) module->kind module->full-name)
                                               (map (fn [m]
                                                      (assoc m
                                                             :leaf? (boolean (get module->leaf? (:module m)))

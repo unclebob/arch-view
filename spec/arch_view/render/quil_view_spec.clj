@@ -4,7 +4,7 @@
             [speclj.core :refer :all]))
 
 (describe "quil scene model"
-  (it "builds full-width layer rectangles with horizontal module positions"
+  (it "builds racetrack-sized layer rectangles with horizontal module positions"
     (let [architecture {:layout {:layers [{:index 0 :modules ["d"]}
                                           {:index 1 :modules ["b"]}
                                           {:index 2 :modules ["a" "c"]}]
@@ -12,10 +12,11 @@
                         :classified-edges #{{:from "a" :to "b" :type :direct}
                                             {:from "c" :to "d" :type :abstract}}}
           scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})]
-      (should= [{:index 0 :x 0 :y 0 :width 1000 :height 120}
-                {:index 1 :x 0 :y 150 :width 1000 :height 120}
-                {:index 2 :x 0 :y 300 :width 1000 :height 120}]
-               (mapv #(dissoc % :label :full-name) (:layer-rects scene)))
+      (should= [220.0 220.0 220.0]
+               (mapv :width (:layer-rects scene)))
+      (should= true (every? #(<= 24.0 (:x %)) (:layer-rects scene)))
+      (should= [0 150 300]
+               (mapv :y (:layer-rects scene)))
       (should= ["a" "c"]
                (->> (:module-positions scene)
                     (filter #(= 2 (:layer %)))
