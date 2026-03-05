@@ -945,9 +945,15 @@
    (->> spaced-edges
         (map (fn [edge]
                (when-let [{:keys [x1 y1 x2 y2]} (resolved-edge-segment points bounds edge)]
-                 (assoc edge :distance (point->segment-distance mx my x1 y1 x2 y2)))))
+                 (let [dx (Math/abs (double (- x2 x1)))
+                       dy (Math/abs (double (- y2 y1)))
+                       diagonal? (and (> dx 1.0) (> dy 1.0))
+                       tol (* (double tolerance) (if diagonal? 0.6 1.0))]
+                   (assoc edge
+                          :hover-tolerance tol
+                          :distance (point->segment-distance mx my x1 y1 x2 y2))))))
         (remove nil?)
-        (filter #(<= (double (:distance %)) (double tolerance)))
+        (filter #(<= (double (:distance %)) (double (:hover-tolerance %))))
         (sort-by :distance)
         first)))
 

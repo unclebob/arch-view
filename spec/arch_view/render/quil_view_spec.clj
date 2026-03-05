@@ -153,6 +153,19 @@
       (should= nil miss)
       (should-not= nil hit)))
 
+  (it "uses tighter tolerance for diagonal edges"
+    (let [points {"a" {:x 100.0 :y 100.0}
+                  "b" {:x 300.0 :y 300.0}
+                  "c" {:x 100.0 :y 100.0}
+                  "d" {:x 300.0 :y 100.0}}
+          bounds {:min-x 0.0 :max-x 500.0 :min-y 0.0 :max-y 500.0}
+          diagonal [{:from "a" :to "b" :count 1 :arrowhead :standard}]
+          horizontal [{:from "c" :to "d" :count 1 :arrowhead :standard}]
+          diag-hit (sut/hovered-edge diagonal points bounds 170.0 177.0 8.0)
+          horiz-hit (sut/hovered-edge horizontal points bounds 170.0 106.0 8.0)]
+      (should= nil diag-hit)
+      (should-not= nil horiz-hit)))
+
   (it "separates opposite-direction horizontal arrows"
     (let [points {"a" {:x 100.0 :y 100.0}
                   "b" {:x 300.0 :y 100.0}}
