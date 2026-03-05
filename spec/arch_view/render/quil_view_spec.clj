@@ -178,4 +178,18 @@
                  :viewport-height 600
                  :viewport-width 1200}
           next-state (sut/handle-mouse-clicked state {:x (:x one-pos) :y (:y one-pos)})]
-      (should= state next-state))))
+      (should= state next-state)))
+
+  (it "marks drillable namespace labels with a plus prefix"
+    (let [architecture {:graph {:nodes #{"empire.alpha.one"
+                                         "empire.alpha.two"
+                                         "empire.beta"}
+                                :edges #{}
+                                :abstract-modules #{}}
+                        :classified-edges #{}}
+          root-view (sut/view-architecture architecture [])
+          root-scene (sut/build-scene root-view)
+          marked (sut/attach-drillable-markers root-scene architecture [])
+          labels (into {} (map (juxt :module :display-label) (:module-positions marked)))]
+      (should= "+ alpha" (get labels "alpha"))
+      (should= "beta" (get labels "beta")))))

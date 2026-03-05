@@ -55,11 +55,15 @@
   [label]
   (* 7.0 (count (or label ""))))
 
+(defn- rendered-label
+  [{:keys [display-label label]}]
+  (or display-label label))
+
 (defn- overlap?
   [a b]
   (< (Math/abs (double (- (:x a) (:x b))))
-     (/ (+ (label-width (:label a))
-           (label-width (:label b)))
+     (/ (+ (label-width (rendered-label a))
+           (label-width (rendered-label b)))
         2.0)))
 
 (defn- needs-stagger?
@@ -213,8 +217,8 @@
       (draw-arrowhead sx sy tx ty arrowhead)))))
 
 (defn- label-hitbox
-  [{:keys [x y label]}]
-  (let [width (label-width label)
+  [{:keys [x y] :as module-position}]
+  (let [width (label-width (rendered-label module-position))
         pad-x 8.0
         pad-y 6.0
         half-w (+ (/ width 2.0) pad-x)
@@ -249,6 +253,24 @@
   (let [candidate (conj (or (:namespace-path state) []) (:module hovered))
         child-view (view-architecture (:architecture state) candidate)]
     (seq (get-in child-view [:graph :nodes]))))
+
+(defn attach-drillable-markers
+  [scene architecture namespace-path]
+  (if-not architecture
+    scene
+    (update scene :module-positions
+            (fn [positions]
+              (mapv (fn [position]
+                      (let [drillable (boolean (drillable? {:architecture architecture
+                                                            :namespace-path namespace-path}
+                                                           position))
+                            label (:label position)]
+                        (assoc position
+                               :drillable? drillable
+                               :display-label (if drillable
+                                                (str "+ " label)
+                                                label))))
+                    positions)))))
 
 (defn scroll-range
   [content-height viewport-height]
@@ -308,11 +330,11 @@
     (q/fill 45 60 80)
     (q/text-align :left :top)
     (q/text label (+ x 8) (+ y 6)))
-  (doseq [{:keys [x y label]} (:module-positions scene)]
+  (doseq [{:keys [x y] :as module-position} (:module-positions scene)]
     (q/fill 15 20 30)
     (q/no-stroke)
     (q/text-align :center :center)
-    (q/text label x y))
+    (q/text (rendered-label module-position) x y))
   (let [points (module-point-map scene)]
     (doseq [edge (:edge-drawables scene)]
       (draw-edge points edge))))
@@ -343,11 +365,7 @@
         my (double (q/mouse-y))
         world-my (+ my scroll-y)
         hovered (hovered-module-position (:module-positions scene) mx world-my)]
-    (q/cursor (if (and hovered
-                       architecture
-                       (drillable? {:architecture architecture
-                                    :namespace-path namespace-path}
-                                   hovered))
+    (q/cursor (if (:drillable? hovered)
                 :cross
                 :arrow))
     (q/background 250 250 250)
@@ -498,7 +516,8 @@
 (defn- drilldown-scene
   [state path]
   (let [view (view-architecture (:architecture state) path)
-        scene (build-scene view)]
+        scene (-> (build-scene view)
+                  (attach-drillable-markers (:architecture state) path))]
     (assoc state
            :namespace-path path
            :scene scene)))
@@ -512,7 +531,8 @@
          initial-view (if architecture
                         (view-architecture effective-architecture [])
                         {:scene scene})
-         initial-scene (or (:scene initial-view) scene)
+         initial-scene (-> (or (:scene initial-view) scene)
+                           (attach-drillable-markers effective-architecture (when architecture [])))
          content-height (if (seq (:layer-rects initial-scene))
                           (->> (:layer-rects initial-scene)
                                (map (fn [{:keys [y height]}] (+ y height)))
