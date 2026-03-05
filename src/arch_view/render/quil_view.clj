@@ -340,13 +340,20 @@
     (q/line sx sy ex ey)
     (draw-arrowhead sx sy tx ty arrowhead)))
 
+(defn- clamp-point
+  [[x y] {:keys [min-x max-x min-y max-y]}]
+  [(-> x double (max min-x) (min max-x))
+   (-> y double (max min-y) (min max-y))])
+
 (defn- draw-edge
-  [points {:keys [from to from-point to-point arrowhead preserve-endpoints? parallel-offset]}]
+  [points bounds {:keys [from to from-point to-point arrowhead preserve-endpoints? parallel-offset]}]
   (let [offset (double (or parallel-offset 0.0))
         [x1 y1] (or from-point (let [{x :x y :y} (get points from)] [x y]))
         [x2 y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))
         x1 (+ (double x1) offset)
-        x2 (+ (double x2) offset)]
+        x2 (+ (double x2) offset)
+        [x1 y1] (clamp-point [x1 y1] bounds)
+        [x2 y2] (clamp-point [x2 y2] bounds)]
     (when (and x1 y1 x2 y2)
       (if preserve-endpoints?
         (let [[ex ey] (edge-line-endpoint x1 y1 x2 y2 arrowhead)]
@@ -641,9 +648,13 @@
         edge-drawables (declutter-edge-drawables scene declutter-mode)
         spaced-edges (if (= :between-layers declutter-mode)
                        edge-drawables
-                       (apply-parallel-arrow-spacing edge-drawables points))]
+                       (apply-parallel-arrow-spacing edge-drawables points))
+        bounds {:min-x 2.0
+                :max-x (- (content-width-for-scene scene) 2.0)
+                :min-y 2.0
+                :max-y (- (content-height-for-scene scene) 2.0)}]
     (doseq [edge spaced-edges]
-      (draw-edge points edge))))
+      (draw-edge points bounds edge))))
 
 (defn- draw-toolbar
   [{:keys [namespace-path declutter-mode]}]
