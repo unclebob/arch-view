@@ -14,4 +14,14 @@
       (should= 2 (get-in layout [:module->layer "a"]))
       (should= 2 (get-in layout [:module->layer "c"]))
       (should= 1 (get-in layout [:module->layer "b"]))
-      (should= 0 (get-in layout [:module->layer "d"])))))
+      (should= 0 (get-in layout [:module->layer "d"]))))
+
+  (it "handles dependency cycles without recursion overflow"
+    (let [graph {:nodes #{"a" "b" "c"}
+                 :edges #{{:from "a" :to "b"}
+                          {:from "b" :to "a"}
+                          {:from "b" :to "c"}}}
+          layout (sut/assign-layers graph)]
+      (should= #{"a" "b" "c"}
+               (set (keys (:module->layer layout))))
+      (should= true (every? integer? (vals (:module->layer layout)))))))

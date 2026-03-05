@@ -10,16 +10,19 @@
 (defn- depth-fn
   [edges]
   (let [memo (atom {})]
-    (letfn [(depth [node]
+    (letfn [(depth [node visiting]
               (if-some [cached (get @memo node)]
                 cached
-                (let [deps (outgoing edges node)
+                (if (contains? visiting node)
+                  0
+                  (let [deps (outgoing edges node)
+                        next-visiting (conj visiting node)
                       value (if (empty? deps)
                               0
-                              (inc (apply max (map depth deps))))]
-                  (swap! memo assoc node value)
-                  value))) ]
-      depth)))
+                              (inc (apply max (map #(depth % next-visiting) deps))))]
+                    (swap! memo assoc node value)
+                    value))))]
+      #(depth % #{}))))
 
 (defn assign-layers
   [{:keys [nodes edges]}]
