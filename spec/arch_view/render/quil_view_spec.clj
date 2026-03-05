@@ -36,4 +36,16 @@
       (should= [0 0] (:tip up))
       (should= [5.0 12.0] (:left up))
       (should= [-5.0 12.0] (:right up))
-      (should= true (:closed? up)))))
+      (should= true (:closed? up))))
+
+  (it "exits sketch when escape is pressed"
+    (let [exited? (atom false)]
+      (with-redefs [quil.core/exit (fn [] (reset! exited? true))]
+        (sut/handle-key-pressed {} {:key :escape}))
+      (should= true @exited?)))
+
+  (it "ignores non-escape key presses"
+    (let [exited? (atom false)]
+      (with-redefs [quil.core/exit (fn [] (reset! exited? true))]
+        (sut/handle-key-pressed {} {:key :a}))
+      (should= false @exited?))))

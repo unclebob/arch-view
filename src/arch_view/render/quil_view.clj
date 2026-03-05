@@ -130,6 +130,12 @@
     (doseq [edge (:edge-drawables scene)]
       (draw-edge points edge))))
 
+(defn handle-key-pressed
+  [scene event]
+  (when (= :escape (:key event))
+    (q/exit))
+  scene)
+
 (defn show!
   ([scene]
    (show! scene {}))
@@ -149,6 +155,7 @@
        :size [width height]
        :setup (fn [] scene)
        :draw draw-scene
+       :key-pressed handle-key-pressed
        :middleware [m/fun-mode]))))
 
 (defn wait-until-closed!
