@@ -174,7 +174,7 @@
     (should= true (> (sut/thumb-y->scroll 300.0 2000 500) 0.0))
     (should= 1500.0 (sut/thumb-y->scroll 10000.0 2000 500)))
 
-  (it "zooms in on ctrl-right click and restores prior zoom on ctrl-left click"
+  (it "zooms in on + key and restores prior zoom on - key"
     (let [state {:scene {:layer-rects [{:x 0.0 :y 0.0 :width 100.0 :height 1000.0}]}
                  :zoom 1.0
                  :zoom-stack []
@@ -182,14 +182,14 @@
                  :viewport-height 600
                  :viewport-width 1200
                  :dragging-scrollbar? false}
-          zoomed (sut/handle-mouse-pressed state {:button :right :modifiers [:control] :x 100.0 :y 200.0})
-          restored (sut/handle-mouse-pressed zoomed {:button :left :modifiers [:control] :x 100.0 :y 200.0})]
+          zoomed (sut/handle-key-pressed state {:key \+ :y 200.0})
+          restored (sut/handle-key-pressed zoomed {:key \- :y 200.0})]
       (should= 1.1 (:zoom zoomed))
       (should= 1 (count (:zoom-stack zoomed)))
       (should= 1.0 (:zoom restored))
       (should= 0 (count (:zoom-stack restored)))))
 
-  (it "accepts numeric modifier masks for ctrl zoom clicks"
+  (it "supports keyword + and - keys for zoom controls"
     (let [state {:scene {:layer-rects [{:x 0.0 :y 0.0 :width 100.0 :height 1000.0}]}
                  :zoom 1.0
                  :zoom-stack []
@@ -197,14 +197,12 @@
                  :viewport-height 600
                  :viewport-width 1200
                  :dragging-scrollbar? false}
-          ctrl-mask 128
-          zoomed (sut/handle-mouse-pressed state {:button 3
-                                                  :modifiers ctrl-mask
-                                                  :x 40.0
-                                                  :y 80.0})]
-      (should= 1.1 (:zoom zoomed))))
+          zoomed (sut/handle-key-pressed state {:key :+ :y 80.0})
+          restored (sut/handle-key-pressed zoomed {:key :- :y 80.0})]
+      (should= 1.1 (:zoom zoomed))
+      (should= 1.0 (:zoom restored))))
 
-  (it "stores zoom center on stack and restores it on unzoom"
+  (it "stores zoom center on stack and restores it on - key"
     (let [state {:scene {:layer-rects [{:x 0.0 :y 0.0 :width 100.0 :height 1200.0}]
                          :module-positions []
                          :edge-drawables []}
@@ -216,32 +214,13 @@
                  :viewport-height 700
                  :viewport-width 1200
                  :dragging-scrollbar? false}
-          zoomed (sut/handle-mouse-pressed state {:button 3 :modifiers 128 :x 200.0 :y 300.0})
+          zoomed (sut/handle-key-pressed state {:key \+ :y 300.0})
           stack-top (peek (:zoom-stack zoomed))
-          restored (sut/handle-mouse-pressed zoomed {:button 1 :modifiers 128 :x 200.0 :y 300.0})]
+          restored (sut/handle-key-pressed zoomed {:key \- :y 300.0})]
       (should= true (contains? stack-top :center-world-y))
       (should= true (contains? stack-top :screen-y))
       (should= 1.0 (:zoom restored))
       (should= 150.0 (:scroll-y restored))))
-
-  (it "zooms on ctrl-right mouse pressed and suppresses following click"
-    (let [state {:scene {:layer-rects [{:x 0.0 :y 0.0 :width 100.0 :height 1000.0}]
-                         :module-positions []
-                         :edge-drawables []}
-                 :architecture nil
-                 :namespace-path []
-                 :zoom 1.0
-                 :zoom-stack []
-                 :scroll-y 0.0
-                 :viewport-height 600
-                 :viewport-width 1200
-                 :dragging-scrollbar? false}
-          pressed (sut/handle-mouse-pressed state {:button 3 :modifiers 128 :x 60.0 :y 80.0})
-          clicked (sut/handle-mouse-clicked pressed {:button 3 :modifiers 128})]
-      (should= 1.1 (:zoom pressed))
-      (should= true (:suppress-next-click? pressed))
-      (should= false (:suppress-next-click? clicked))
-      (should= 1.1 (:zoom clicked))))
 
   (it "exits sketch when escape is pressed"
     (let [exited? (atom false)]

@@ -737,7 +737,12 @@
               m)))
         module-positions))
 
-(declare view-architecture drilldown-scene push-nav-state apply-zoom-click)
+(declare view-architecture
+         drilldown-scene
+         push-nav-state
+         apply-zoom-click
+         world-y-at-screen
+         scroll-for-world-y)
 
 (defn- drillable?
   [state hovered]
@@ -1059,11 +1064,66 @@
       hovered-arrow (draw-tooltip (edge-hover-label hovered-arrow) mx my))
     (draw-scrollbar content-height viewport-height scroll-y viewport-width)))
 
+(defn- plus-key?
+  [k]
+  (contains? #{:+ \+ \=} k))
+
+(defn- minus-key?
+  [k]
+  (contains? #{:- \- \_} k))
+
+(defn- zoom-in-at-screen-y
+  [{:keys [zoom zoom-stack scene viewport-height] :as state} screen-y]
+  (let [old-z (double (or zoom 1.0))
+        center-world-y (world-y-at-screen screen-y (:scroll-y state) old-z)
+        new-z (* old-z 1.1)
+        content-height (scaled-content-height scene new-z)
+        next-scroll (clamp-scroll (scroll-for-world-y center-world-y screen-y new-z)
+                                  content-height
+                                  viewport-height)]
+    (assoc state
+           :zoom new-z
+           :scroll-y next-scroll
+           :zoom-stack (conj (vec (or zoom-stack []))
+                             {:zoom old-z
+                              :center-world-y center-world-y
+                              :screen-y (double screen-y)
+                              :scroll-y (double (or (:scroll-y state) 0.0))}))))
+
+(defn- zoom-out-at-screen-y
+  [{:keys [zoom zoom-stack scene viewport-height] :as state} screen-y]
+  (let [stack (vec (or zoom-stack []))]
+    (when (seq stack)
+      (let [old-z (double (or zoom 1.0))
+            {prev-z :zoom prev-scroll :scroll-y center-world-y :center-world-y screen-y0 :screen-y} (peek stack)
+            target-screen-y (double (or screen-y0 screen-y))
+            content-height (scaled-content-height scene prev-z)
+            centered-scroll (scroll-for-world-y (or center-world-y
+                                                   (world-y-at-screen screen-y (:scroll-y state) old-z))
+                                               target-screen-y
+                                               prev-z)
+            next-scroll (clamp-scroll (or centered-scroll prev-scroll)
+                                      content-height
+                                      viewport-height)]
+        (assoc state
+               :zoom prev-z
+               :scroll-y next-scroll
+               :zoom-stack (pop stack))))))
+
 (defn handle-key-pressed
   [state event]
-  (when (= :escape (:key event))
-    (q/exit))
-  state)
+  (let [k (:key event)
+        mouse-y (double (or (:y event)
+                            (:mouse-y event)
+                            (try
+                              (q/mouse-y)
+                              (catch Throwable _
+                                0.0))))]
+    (cond
+      (= :escape k) (do (q/exit) state)
+      (plus-key? k) (zoom-in-at-screen-y state mouse-y)
+      (minus-key? k) (or (zoom-out-at-screen-y state mouse-y) state)
+      :else state)))
 
 (defn handle-mouse-wheel
   [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event]
@@ -1090,19 +1150,14 @@
 
 (defn handle-mouse-pressed
   [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event]
-  (or (when-let [zoomed (apply-zoom-click state event)]
-        (assoc zoomed
-               :suppress-next-click? true
-               :dragging-scrollbar? false
-               :drag-offset nil))
-      (let [content-height (scaled-content-height scene (or zoom 1.0))
-            thumb (scrollbar-rect content-height viewport-height scroll-y viewport-width)
-            [mx my] (mouse-pos event)]
-        (if (and thumb (point-in-rect? thumb mx my))
-          (assoc state
-                 :dragging-scrollbar? true
-                 :drag-offset (- my (:y thumb)))
-          state))))
+  (let [content-height (scaled-content-height scene (or zoom 1.0))
+        thumb (scrollbar-rect content-height viewport-height scroll-y viewport-width)
+        [mx my] (mouse-pos event)]
+    (if (and thumb (point-in-rect? thumb mx my))
+      (assoc state
+             :dragging-scrollbar? true
+             :drag-offset (- my (:y thumb)))
+      state)))
 
 (defn handle-mouse-dragged
   [{:keys [scene viewport-height dragging-scrollbar? drag-offset zoom] :as state} event]
@@ -1266,23 +1321,19 @@
       nil))))
 
 (defn handle-mouse-released
-  [{:keys [dragging-scrollbar? suppress-next-click?] :as state} event]
+  [{:keys [dragging-scrollbar?] :as state} event]
   (if dragging-scrollbar?
     (assoc state :dragging-scrollbar? false :drag-offset nil :suppress-next-click? false)
-    (if suppress-next-click?
-      (assoc state :suppress-next-click? false :dragging-scrollbar? false :drag-offset nil)
-      (let [base-state (assoc state :dragging-scrollbar? false :drag-offset nil)]
-        (or (apply-toolbar-click base-state event)
-            (apply-drilldown-click base-state event))))))
+    (let [base-state (assoc state :dragging-scrollbar? false :drag-offset nil)]
+      (or (apply-toolbar-click base-state event)
+          (apply-drilldown-click base-state event)))))
 
 (defn handle-mouse-clicked
   [state event]
   (if (:dragging-scrollbar? state)
     state
-    (if (:suppress-next-click? state)
-      (assoc state :suppress-next-click? false)
-      (or (apply-toolbar-click state event)
-          (apply-drilldown-click state event)))))
+    (or (apply-toolbar-click state event)
+        (apply-drilldown-click state event))))
 
 (defn- namespace-segments
   [module]
