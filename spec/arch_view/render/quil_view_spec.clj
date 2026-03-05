@@ -335,6 +335,33 @@
                        vec)]
       (should= [-22.5 -7.5 7.5 22.5] offsets)))
 
+  (it "uses local lane counts per overlap cluster to avoid clamped restacking"
+    (let [points (merge {"x1" {:x 100.0 :y 100.0}
+                         "x2" {:x 100.0 :y 320.0}
+                         "x3" {:x 100.0 :y 110.0}
+                         "x4" {:x 100.0 :y 330.0}
+                         "x5" {:x 100.0 :y 120.0}
+                         "x6" {:x 100.0 :y 340.0}
+                         "x7" {:x 100.0 :y 130.0}
+                         "x8" {:x 100.0 :y 350.0}
+                         "a1" {:x 300.0 :y 200.0}
+                         "b1" {:x 600.0 :y 200.0}
+                         "a2" {:x 300.0 :y 205.0}
+                         "b2" {:x 600.0 :y 205.0}})
+          edges [{:from "x1" :to "x2" :type :direct :arrowhead :standard}
+                 {:from "x3" :to "x4" :type :direct :arrowhead :standard}
+                 {:from "x5" :to "x6" :type :direct :arrowhead :standard}
+                 {:from "x7" :to "x8" :type :direct :arrowhead :standard}
+                 {:from "a1" :to "b1" :type :direct :arrowhead :standard}
+                 {:from "a2" :to "b2" :type :direct :arrowhead :standard}]
+          spaced (sut/apply-parallel-arrow-spacing edges points)
+          right-cluster (->> spaced
+                             (filter #(contains? #{"a1" "a2"} (:from %)))
+                             (sort-by :from))
+          offsets (mapv :parallel-offset-y right-cluster)]
+      (should= 2 (count right-cluster))
+      (should= [-7.5 7.5] (sort offsets))))
+
   (it "keeps rectangle-anchored endpoints on rectangle edges under offsets"
     (let [from-rect {:x 10.0 :y 20.0 :width 100.0 :height 60.0}
           to-rect {:x 300.0 :y 40.0 :width 120.0 :height 80.0}

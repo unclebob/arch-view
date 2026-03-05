@@ -501,13 +501,21 @@
                  :max-x (max x1 x2)
                  :min-y (min y1 y2)
                  :max-y (max y1 y2)}))
-            (bbox-overlap? [a b]
-              (and (<= (max (:min-x a) (:min-x b))
-                       (min (:max-x a) (:max-x b)))
-                   (<= (max (:min-y a) (:min-y b))
-                       (min (:max-y a) (:max-y b)))))
-            (lane-available? [lane-boxes box]
-              (not-any? #(bbox-overlap? % box) lane-boxes))
+          (bbox-overlap? [a b]
+            (and (<= (max (:min-x a) (:min-x b))
+                     (min (:max-x a) (:max-x b)))
+                 (<= (max (:min-y a) (:min-y b))
+                      (min (:max-y a) (:max-y b)))))
+          (unit-dir [edge]
+            (let [[x1 y1 x2 y2] (base-points edge)
+                  dx (- x2 x1)
+                  dy (- y2 y1)
+                  len (max 0.001 (Math/sqrt (+ (* dx dx) (* dy dy))))]
+              [(/ dx len) (/ dy len)]))
+          (parallel-ish? [[ux uy] [vx vy]]
+            (>= (Math/abs (+ (* ux vx) (* uy vy))) 0.985))
+          (lane-available? [lane-boxes box]
+            (not-any? #(bbox-overlap? % box) lane-boxes))
             (assign-lane [lanes edge]
               (let [box (bbox edge)
                     lane-idx (or (first (keep-indexed (fn [idx lane-boxes]
@@ -597,24 +605,84 @@
             (let [dx (- x2 x1)
                   dy (- y2 y1)
                   len (max 0.001 (Math/sqrt (+ (* dx dx) (* dy dy))))]
-              [(/ (- dy) len) (/ dx len)]))]
-    (let [{:keys [edges max-lane]}
-          (reduce (fn [{:keys [lanes edges max-lane]} edge]
-                    (let [{:keys [lane lanes]} (assign-lane lanes edge)]
-                      {:lanes lanes
-                       :edges (conj edges (assoc edge :lane lane))
-                       :max-lane (max max-lane lane)}))
-                  {:lanes [] :edges [] :max-lane -1}
-                  edge-drawables)
-          lane-count (inc (max 0 max-lane))]
-      (mapv (fn [{:keys [lane] :as edge}]
-              (let [[x1 y1 x2 y2] (base-points edge)
-                    offset (offset-for-lane lane lane-count)
-                    [nx ny] (normal-unit x1 y1 x2 y2)]
-                (assoc edge
-                       :parallel-offset-x (* nx offset)
-                       :parallel-offset-y (* ny offset))))
-            edges))))
+              [(/ (- dy) len) (/ dx len)]))
+          (unit-dir [edge]
+            (let [[x1 y1 x2 y2] (base-points edge)
+                  dx (- x2 x1)
+                  dy (- y2 y1)
+                  len (max 0.001 (Math/sqrt (+ (* dx dx) (* dy dy))))]
+              [(/ dx len) (/ dy len)]))
+          (parallel-ish? [[ux uy] [vx vy]]
+            (>= (Math/abs (+ (* ux vx) (* uy vy))) 0.985))
+          (overlap-indexes [indexed]
+            (let [size (count indexed)
+                  boxes (mapv (comp bbox :edge) indexed)
+                  dirs (mapv (comp unit-dir :edge) indexed)]
+              (reduce (fn [acc [i j]]
+                        (if (and (bbox-overlap? (nth boxes i) (nth boxes j))
+                                 (parallel-ish? (nth dirs i) (nth dirs j)))
+                          (-> acc
+                              (update i (fnil conj #{}) j)
+                              (update j (fnil conj #{}) i))
+                          acc))
+                      {}
+                      (for [i (range size)
+                            j (range (inc i) size)]
+                        [i j]))))
+          (connected-components [adjacency size]
+            (loop [unvisited (set (range size))
+                   components []]
+              (if (empty? unvisited)
+                components
+                (let [start (first unvisited)]
+                  (let [visited (loop [stack [start]
+                                       visited #{start}]
+                                  (if (empty? stack)
+                                    visited
+                                    (let [node (peek stack)
+                                          next-stack (pop stack)
+                                          neighbors (get adjacency node #{})
+                                          fresh (remove visited neighbors)]
+                                      (recur (into next-stack fresh)
+                                             (into visited fresh)))))]
+                    (recur (apply disj unvisited visited)
+                           (conj components visited)))))))]
+    (let [indexed (mapv (fn [idx edge] {:idx idx :edge edge}) (range) edge-drawables)
+          adjacency (overlap-indexes indexed)
+          components (connected-components adjacency (count indexed))
+          idx->edge (reduce (fn [acc component]
+                              (let [component-indexes (->> component sort vec)
+                                    component-edges (mapv (fn [idx]
+                                                            (:edge (nth indexed idx)))
+                                                          component-indexes)
+                                    {:keys [edges max-lane]}
+                                    (reduce (fn [{:keys [lanes edges max-lane]} edge]
+                                              (let [{:keys [lane lanes]} (assign-lane lanes edge)]
+                                                {:lanes lanes
+                                                 :edges (conj edges (assoc edge :lane lane))
+                                                 :max-lane (max max-lane lane)}))
+                                            {:lanes [] :edges [] :max-lane -1}
+                                            component-edges)
+                                    lane-count (inc (max 0 max-lane))]
+                                (reduce (fn [acc2 [local-idx {:keys [lane] :as edge}]]
+                                          (let [[x1 y1 x2 y2] (base-points edge)
+                                                offset (offset-for-lane lane lane-count)
+                                                [nx ny] (normal-unit x1 y1 x2 y2)]
+                                            (assoc acc2
+                                                   (-> component
+                                                       vec
+                                                       sort
+                                                       (nth local-idx))
+                                                   (assoc edge
+                                                          :parallel-offset-x (* nx offset)
+                                                          :parallel-offset-y (* ny offset)))))
+                                        acc
+                                        (map-indexed vector edges))))
+                            {}
+                            components)]
+      (mapv (fn [idx]
+              (get idx->edge idx (nth edge-drawables idx)))
+            (range (count edge-drawables))))))
 
 (defn- label-hitbox
   [{:keys [x y] :as module-position}]
