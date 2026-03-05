@@ -284,6 +284,26 @@
           dist (Math/sqrt (+ (* dx dx) (* dy dy)))]
       (should= 15.0 dist)))
 
+  (it "keeps rectangle-anchored endpoints on rectangle edges under offsets"
+    (let [from-rect {:x 10.0 :y 20.0 :width 100.0 :height 60.0}
+          to-rect {:x 300.0 :y 40.0 :width 120.0 :height 80.0}
+          edge {:from "a"
+                :to "b"
+                :from-rect from-rect
+                :to-rect to-rect
+                :parallel-offset-x 12.0
+                :parallel-offset-y 15.0
+                :arrowhead :standard}
+          points {"a" {:x 50.0 :y 50.0}
+                  "b" {:x 350.0 :y 80.0}}
+          recorded (atom nil)]
+      (with-redefs [sut/draw-arrow-between-points (fn [x1 y1 x2 y2 _ _]
+                                                    (reset! recorded [x1 y1 x2 y2]))]
+        (#'sut/draw-edge points {:min-x 0.0 :max-x 1000.0 :min-y 0.0 :max-y 1000.0} edge))
+      (let [[x1 _ x2 _] @recorded]
+        (should= 110.0 x1)
+        (should= 300.0 x2))))
+
   (it "cycles declutter modes across all four states"
     (should= :concrete (sut/next-declutter-mode :all))
     (should= :abstract (sut/next-declutter-mode :concrete))

@@ -375,31 +375,46 @@
         bottom (+ y height)]
     (if (>= (Math/abs dx) (Math/abs dy))
       (if (>= dx 0.0)
-        [right (clamp-between ty y bottom)]
-        [x (clamp-between ty y bottom)])
+        {:point [right (clamp-between ty y bottom)]
+         :side :right}
+        {:point [x (clamp-between ty y bottom)]
+         :side :left})
       (if (>= dy 0.0)
-        [(clamp-between tx x right) bottom]
-        [(clamp-between tx x right) y]))))
+        {:point [(clamp-between tx x right) bottom]
+         :side :bottom}
+        {:point [(clamp-between tx x right) y]
+         :side :top}))))
+
+(defn- apply-edge-constrained-offset
+  [[x y] side rect offset-x offset-y]
+  (let [{rx :x ry :y rw :width rh :height} rect
+        right (+ rx rw)
+        bottom (+ ry rh)]
+    (case side
+      :left [rx (clamp-between (+ y offset-y) ry bottom)]
+      :right [right (clamp-between (+ y offset-y) ry bottom)]
+      :top [(clamp-between (+ x offset-x) rx right) ry]
+      :bottom [(clamp-between (+ x offset-x) rx right) bottom]
+      [(+ x offset-x) (+ y offset-y)])))
 
 (defn- draw-edge
   [points bounds {:keys [from to from-point to-point from-rect to-rect arrowhead preserve-endpoints? parallel-offset-x parallel-offset-y]}]
-  (let [
-        raw-offset-x (double (or parallel-offset-x 0.0))
+  (let [raw-offset-x (double (or parallel-offset-x 0.0))
         raw-offset-y (double (or parallel-offset-y 0.0))
         [base-x1 base-y1] (or from-point (let [{x :x y :y} (get points from)] [x y]))
         [base-x2 base-y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))
-        [x1 y1] (if from-rect
-                  (rect-edge-anchor from-rect base-x2 base-y2)
-                  [base-x1 base-y1])
-        [x2 y2] (if to-rect
-                  (rect-edge-anchor to-rect x1 y1)
-                  [base-x2 base-y2])
+        from-anchor (when from-rect (rect-edge-anchor from-rect base-x2 base-y2))
+        [x1 y1] (or (:point from-anchor) [base-x1 base-y1])
+        to-anchor (when to-rect (rect-edge-anchor to-rect x1 y1))
+        [x2 y2] (or (:point to-anchor) [base-x2 base-y2])
         offset-x (clamp-offset raw-offset-x x1 x2 (:min-x bounds) (:max-x bounds))
         offset-y (clamp-offset raw-offset-y y1 y2 (:min-y bounds) (:max-y bounds))
-        x1 (+ (double x1) offset-x)
-        x2 (+ (double x2) offset-x)
-        y1 (+ (double y1) offset-y)
-        y2 (+ (double y2) offset-y)
+        [x1 y1] (if from-anchor
+                  (apply-edge-constrained-offset [x1 y1] (:side from-anchor) from-rect offset-x offset-y)
+                  [(+ (double x1) offset-x) (+ (double y1) offset-y)])
+        [x2 y2] (if to-anchor
+                  (apply-edge-constrained-offset [x2 y2] (:side to-anchor) to-rect offset-x offset-y)
+                  [(+ (double x2) offset-x) (+ (double y2) offset-y)])
         anchored? (or from-rect to-rect)]
     (when (and x1 y1 x2 y2)
       (if preserve-endpoints?
