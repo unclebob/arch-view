@@ -1,0 +1,5 @@
+{:paths ["src" "test"]
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}
+        quil/quil {:mvn/version "4.3.1563"}}
+ :aliases
+ {:test {:main-opts ["-m" "arch-view.test-runner"]}}}
