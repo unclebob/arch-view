@@ -227,12 +227,15 @@
          module->display-label (or (:module->display-label architecture) {})
          layer-rects (mapv (fn [{:keys [index]}]
                              (let [modules (get-in architecture [:layout :layers index :modules])
-                                   component (dominant-component modules module->component)]
-                                {:index index
+                                   component (dominant-component modules module->component)
+                                   abstract-layer? (boolean (some #(= :abstract (get module->kind %))
+                                                                  modules))]
+                               {:index index
                                 :x (track-x-for (get-in placement-by-layer-index [index :track] 0) canvas-width)
                                 :y (layer-y (get-in placement-by-layer-index [index :row] index) layer-height layer-gap)
                                 :width (track-width-for canvas-width)
                                 :height layer-height
+                                :abstract? abstract-layer?
                                 :full-name (some-> modules first module->full-name strip-top-namespace)
                                 :label (or (get layer->label index)
                                            (if component
@@ -645,8 +648,10 @@
 (defn- draw-scene-content
   [scene declutter-mode viewport-width viewport-height]
   (q/background 250 250 250)
-  (doseq [{:keys [x y width height label]} (:layer-rects scene)]
-    (q/fill 225 233 242)
+  (doseq [{:keys [x y width height label abstract?]} (:layer-rects scene)]
+    (if abstract?
+      (q/fill 226 242 226)
+      (q/fill 225 233 242))
     (q/stroke 120 140 160)
     (q/rect x y width height)
     (q/fill 45 60 80)

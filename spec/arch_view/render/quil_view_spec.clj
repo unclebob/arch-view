@@ -33,6 +33,18 @@
                (set (map #(select-keys % [:from :to :arrowhead])
                          (:edge-drawables scene))))))
 
+  (it "marks layers abstract when they contain abstract modules"
+    (let [architecture {:layout {:layers [{:index 0 :modules ["alpha"]}
+                                          {:index 1 :modules ["beta"]}]
+                                 :module->layer {"alpha" 0 "beta" 1}}
+                        :module->kind {"alpha" :concrete
+                                       "beta" :abstract}
+                        :classified-edges #{}}
+          scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})
+          by-index (into {} (map (juxt :index identity) (:layer-rects scene)))]
+      (should= false (:abstract? (get by-index 0)))
+      (should= true (:abstract? (get by-index 1)))))
+
   (it "staggers module label y positions when horizontal space is tight"
     (let [architecture {:layout {:layers [{:index 0 :modules ["alpha.beta.long-module-one"
                                                                "alpha.beta.long-module-two"
