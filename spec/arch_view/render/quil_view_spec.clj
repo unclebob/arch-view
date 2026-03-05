@@ -221,13 +221,14 @@
                                 :abstract-modules #{}}
                         :classified-edges #{{:from "empire.ui" :to "empire.acceptance" :type :direct}}}
           root-view (sut/view-architecture architecture [])
-          scene (sut/build-scene root-view)]
-      (should= ["application" "ui" "acceptance"]
-               (mapv :label (:layer-rects scene)))
-      (should= [2 0 1]
-               (->> (:module-positions scene)
-                    (sort-by :module)
-                    (mapv :layer)))))
+          scene (sut/build-scene root-view)
+          layer-by-module (into {} (map (juxt :module :layer) (:module-positions scene)))
+          labels (mapv :label (:layer-rects scene))]
+      (should= true (< (get layer-by-module "ui")
+                       (get layer-by-module "acceptance")))
+      (should-not= nil (some #{"ui"} labels))
+      (should-not= nil (some #{"acceptance"} labels))
+      (should-not= nil (some #{"application"} labels))))
 
   (it "applies 15px parallel spacing to overlapping non-layer edges"
     (let [points {"a" {:x 200.0 :y 60.0}

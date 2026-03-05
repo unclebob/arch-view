@@ -798,12 +798,77 @@
   (and (<= (count prefix) (count parts))
        (= prefix (subvec parts 0 (count prefix)))))
 
+(defn- topo-order
+  [nodes edges]
+  (let [outgoing (reduce (fn [acc {:keys [from to]}]
+                           (update acc from (fnil conj #{}) to))
+                         {}
+                         edges)
+        incoming-count (merge (zipmap nodes (repeat 0))
+                              (frequencies (map :to edges)))]
+    (loop [remaining (set nodes)
+           indeg incoming-count
+           available (into (sorted-set)
+                           (filter #(zero? (get indeg % 0)) nodes))
+           ordered []]
+      (if (empty? remaining)
+        ordered
+        (let [n (if (seq available)
+                  (first available)
+                  (first (sort remaining)))
+              next-remaining (disj remaining n)
+              next-available (disj available n)
+              [next-indeg next-available]
+              (reduce (fn [[deg avail] m]
+                        (let [new-count (dec (get deg m 0))
+                              next-deg (assoc deg m new-count)
+                              next-avail (if (and (contains? next-remaining m)
+                                                  (zero? new-count))
+                                           (conj avail m)
+                                           avail)]
+                          [next-deg next-avail]))
+                      [indeg next-available]
+                      (get outgoing n #{}))]
+          (recur next-remaining
+                 next-indeg
+                 next-available
+                 (conj ordered n)))))))
+
+(defn- edge-layout-cost
+  [order edges]
+  (let [idx (into {} (map-indexed vector order))
+        up-penalty 6.0]
+    (reduce (fn [cost {:keys [from to]}]
+              (let [from-idx (double (get idx from 0))
+                    to-idx (double (get idx to 0))
+                    distance (Math/abs (- to-idx from-idx))
+                    upward? (<= to-idx from-idx)]
+                (+ cost distance (if upward? up-penalty 0.0))))
+            0.0
+            edges)))
+
+(defn- optimize-order
+  [initial-order edges]
+  (loop [order (vec initial-order)]
+    (let [base-cost (edge-layout-cost order edges)
+          swaps (for [i (range (dec (count order)))]
+                  (let [swapped (-> order
+                                    (assoc i (nth order (inc i)))
+                                    (assoc (inc i) (nth order i)))
+                        swapped-cost (edge-layout-cost swapped edges)]
+                    {:order swapped :cost swapped-cost}))]
+      (if-let [{:keys [order cost]}
+               (->> swaps
+                    (filter #(< (:cost %) base-cost))
+                    first)]
+        (recur order)
+        order))))
+
 (defn- namespace-layout
   [nodes edges]
-  (let [incoming (frequencies (map :to edges))
-        ordered (->> nodes
-                     (sort-by (juxt #(get incoming % 0) str))
-                     vec)
+  (let [ordered (-> (topo-order nodes edges)
+                    (optimize-order edges)
+                    vec)
         layers (mapv (fn [idx module]
                        {:index idx
                         :modules [module]})
