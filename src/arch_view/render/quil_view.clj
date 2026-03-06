@@ -1,6 +1,7 @@
 (ns arch-view.render.quil-view
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [arch-view.render.route-engine :as route-engine]
             [quil.core :as q]
             [quil.middleware :as m])
   (:import [javax.swing JFrame JEditorPane JScrollPane SwingUtilities]
@@ -1399,27 +1400,13 @@
                                              :to-rect (get layer-rect-by-index to-layer)
                                              :all-rects (:layer-rects scene))))))]
     (let [spaced (apply-parallel-arrow-spacing edge-drawables points)]
-      (loop [remaining spaced
-             placed []
-             placed-segments []]
-        (if (empty? remaining)
-          placed
-          (let [edge (first remaining)
-                routed (resolved-edge-path points route-bounds edge)
-                edge+ (merge edge routed)
-                base-path (normalize-route-endpoints (or (:points routed) []) edge+)
-                route-points (place-non-overlapping-path base-path edge+ placed-segments)
-                final-path (if (seq route-points) route-points base-path)
-                edge' (assoc edge
-                             :route-points final-path
-                             :anchored? (boolean (or (:from-rect edge) (:to-rect edge))))]
-            (if (seq final-path)
-              (recur (rest remaining)
-                     (conj placed edge')
-                     (into placed-segments (path-segments final-path)))
-              (recur (rest remaining)
-                     placed
-                     placed-segments))))))))
+      (route-engine/route-edges
+        {:spaced-edges spaced
+         :resolve-edge-path (fn [edge]
+                              (resolved-edge-path points route-bounds edge))
+         :normalize-route-endpoints normalize-route-endpoints
+         :place-non-overlapping-path place-non-overlapping-path
+         :path-segments path-segments}))))
 
 (defn- draw-toolbar
   [{:keys [namespace-path declutter-mode nav-stack]}]
