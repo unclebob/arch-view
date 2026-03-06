@@ -1373,18 +1373,19 @@
       (loop [remaining spaced
              placed []
              placed-segments []]
-        (if (empty? remaining)
-          placed
-          (let [edge (first remaining)
-                base-path (or (:points (resolved-edge-path points route-bounds edge)) [])
-                route-points (place-non-overlapping-path base-path edge placed-segments)
-                edge' (assoc edge
-                             :route-points route-points
+            (if (empty? remaining)
+              placed
+              (let [edge (first remaining)
+                    base-path (or (:points (resolved-edge-path points route-bounds edge)) [])
+                    route-points (place-non-overlapping-path base-path edge placed-segments)
+                    final-path (if (seq route-points) route-points base-path)
+                    edge' (assoc edge
+                             :route-points final-path
                              :anchored? (boolean (or (:from-rect edge) (:to-rect edge))))]
-            (if (seq route-points)
+            (if (seq final-path)
               (recur (rest remaining)
                      (conj placed edge')
-                     (into placed-segments (path-segments route-points)))
+                     (into placed-segments (path-segments final-path)))
               (recur (rest remaining)
                      placed
                      placed-segments))))))))
