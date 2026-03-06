@@ -650,6 +650,23 @@
           []
           points))
 
+(defn- orthogonalize-path
+  [path-points]
+  (if (< (count path-points) 2)
+    (vec path-points)
+    (->> (partition 2 1 path-points)
+         (reduce (fn [acc [[x1 y1] [x2 y2]]]
+                   (let [last-point (peek acc)]
+                     (if (or (< (Math/abs (- (double x1) (double x2))) 0.1)
+                             (< (Math/abs (- (double y1) (double y2))) 0.1))
+                       (conj acc [x2 y2])
+                       (let [mid [x2 y1]]
+                         (if (= last-point mid)
+                           (conj acc [x2 y2])
+                           (conj acc mid [x2 y2]))))))
+                 [(first path-points)])
+         compact-points)))
+
 (defn- enforce-target-perpendicular
   [path-points to-side]
   (if (or (nil? to-side)
@@ -671,13 +688,15 @@
                                [[px py] [px ty] [tx ty]]))
 
                      path-points)]
-      (compact-points (vec adjusted)))))
+      (-> adjusted vec compact-points orthogonalize-path))))
 
 (defn- resolved-edge-path
   [points bounds edge]
   (when-let [{:keys [x1 y1 x2 y2 anchored? from-side to-side]} (resolved-edge-segment points bounds edge)]
     (if-not (needs-rectilinear-route? x1 y1 x2 y2 edge)
-      {:points (enforce-target-perpendicular [[x1 y1] [x2 y2]] to-side)
+      {:points (-> [[x1 y1] [x2 y2]]
+                   (enforce-target-perpendicular to-side)
+                   orthogonalize-path)
        :anchored? anchored?}
       (let [ignored (cond-> #{}
                       (:from-rect edge) (conj (:from-rect edge))
@@ -690,7 +709,9 @@
             p2 [route-x (second p1)]
             p3 [route-x y2]
             p4 [x2 y2]]
-        {:points (enforce-target-perpendicular (compact-points [[x1 y1] p1 p2 p3 p4]) to-side)
+        {:points (-> (compact-points [[x1 y1] p1 p2 p3 p4])
+                     (enforce-target-perpendicular to-side)
+                     orthogonalize-path)
          :anchored? anchored?}))))
 
 (def ^:private min-sidestep 10.0)
@@ -758,7 +779,8 @@
                             [x y]
                             [(+ (double x) (double dx))
                              (+ (double y) (double dy))])))
-           vec))))
+           vec
+           orthogonalize-path))))
 
 (defn- dominant-axis
   [path-points]
