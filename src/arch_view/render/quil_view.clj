@@ -1512,6 +1512,23 @@
   (when path
     (.getName (io/file path))))
 
+(def ^:private mixed-leaf-suffix "|file")
+
+(defn- mixed-leaf-node-id
+  [child]
+  (str child mixed-leaf-suffix))
+
+(defn- mixed-leaf-node?
+  [node]
+  (and (string? node)
+       (str/ends-with? node mixed-leaf-suffix)))
+
+(defn- node-child-name
+  [node]
+  (if (mixed-leaf-node? node)
+    (subs node 0 (- (count node) (count mixed-leaf-suffix)))
+    node))
+
 (defn- prefix?
   [prefix parts]
   (and (<= (count prefix) (count parts))
@@ -1623,18 +1640,46 @@
                                    (update acc (get module->child module) (fnil conj #{}) module))
                                  {}
                                  scoped-modules)
-        nodes (set (vals module->child))
+        child->info (into {}
+                          (for [[child modules] modules-by-child
+                                :let [exact-module (some (fn [m]
+                                                           (when (= (namespace-segments m)
+                                                                    (conj (vec namespace-path) child))
+                                                             m))
+                                                         modules)
+                                      descendant-modules (if exact-module
+                                                           (disj modules exact-module)
+                                                           modules)]]
+                            [child {:exact-module exact-module
+                                    :descendant-modules descendant-modules}]))
+        module->node (reduce (fn [acc [child {:keys [exact-module descendant-modules]}]]
+                               (let [leaf-node (if (seq descendant-modules)
+                                                 (mixed-leaf-node-id child)
+                                                 child)
+                                     with-descendants (reduce (fn [inner module]
+                                                                (assoc inner module child))
+                                                              acc
+                                                              descendant-modules)]
+                                 (if exact-module
+                                   (assoc with-descendants exact-module leaf-node)
+                                   with-descendants)))
+                             {}
+                             child->info)
+        node->modules (reduce (fn [acc [module node]]
+                                (update acc node (fnil conj #{}) module))
+                              {}
+                              module->node)
+        nodes (set (keys node->modules))
         abstract-source (or (get-in architecture [:graph :abstract-modules]) #{})
         module->kind (into {}
                           (for [n nodes]
-                            [n (if (some #(and (= n (get module->child %))
-                                               (contains? abstract-source %))
-                                         scoped-modules)
+                            [n (if (some #(contains? abstract-source %)
+                                         (get node->modules n))
                                  :abstract
                                  :concrete)]))
         module->leaf? (into {}
                             (for [n nodes
-                                  :let [modules (get modules-by-child n)
+                                  :let [modules (get node->modules n)
                                         leaf? (every? (fn [m]
                                                         (= (count (namespace-segments m))
                                                            (inc (count namespace-path))))
@@ -1642,10 +1687,10 @@
                               [n leaf?]))
         module->source-file (into {}
                                  (for [n nodes
-                                       :let [modules (get modules-by-child n)
+                                       :let [modules (get node->modules n)
                                              exact-module (some (fn [m]
-                                                                  (when (= (namespace-segments m)
-                                                                           (conj (vec namespace-path) n))
+                                                                  (when (= (count (namespace-segments m))
+                                                                           (inc (count namespace-path)))
                                                                     m))
                                                                 modules)
                                              source-file (get module->source-file-all exact-module)]]
@@ -1656,14 +1701,17 @@
                                                 source-file (get module->source-file n)]]
                                       [n (if leaf?
                                            (or (source-filename source-file) n)
-                                           n)]))
+                                           (node-child-name n))]))
         module->full-name (into {}
                                (for [n nodes]
-                                 [n (str/join "." (concat namespace-path [n]))]))
+                                 [n (if-let [source-file (and (true? (get module->leaf? n))
+                                                              (get module->source-file n))]
+                                      (str/join "." (concat namespace-path [(source-filename source-file)]))
+                                      (str/join "." (concat namespace-path [(node-child-name n)])))]))
         edges-by-pair (reduce (fn [acc {:keys [from to type]}]
-                                (let [f (get module->child from)
-                                      t (get module->child to)]
-                                  (if (and f t (not= f t))
+                                (let [f (get module->node from)
+                                      t (get module->node to)]
+                                  (if (and f t (not= (node-child-name f) (node-child-name t)))
                                     (update acc [f t]
                                             (fn [old]
                                               (if old

@@ -644,6 +644,20 @@
       (should= true (:leaf? one-node))
       (should= "/tmp/one.cljc" (:source-file one-node))))
 
+  (it "shows both namespace node and same-named leaf file when both exist"
+    (let [architecture {:graph {:nodes #{"empire.application.state"
+                                         "empire.application.state.effects"}
+                                :edges #{}
+                                :abstract-modules #{}
+                                :module->source-file {"empire.application.state" "/tmp/state.cljc"
+                                                      "empire.application.state.effects" "/tmp/effects.cljc"}}
+                        :classified-edges #{}}
+          app-view (sut/view-architecture architecture ["application"])
+          app-scene (sut/attach-drillable-markers (sut/build-scene app-view) architecture ["application"])
+          labels (set (map :display-label (:module-positions app-scene)))]
+      (should-not= nil (some #{"+ state"} labels))
+      (should-not= nil (some #{"state.cljc"} labels))))
+
   (it "marks namespace as abstract when any descendant module is abstract"
     (let [architecture {:graph {:nodes #{"empire.alpha.one.impl"
                                          "empire.alpha.two"}
