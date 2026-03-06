@@ -111,6 +111,13 @@
     (should= "a->b(3)" (sut/edge-hover-label {:from "a" :to "b" :count 3}))
     (should= "a->b(1)" (sut/edge-hover-label {:from "a" :to "b"})))
 
+  (it "labels back button with destination namespace"
+    (should= "Back" (#'sut/back-button-label {:namespace-path [] :nav-stack []}))
+    (should= "Back: root" (#'sut/back-button-label {:namespace-path ["application"]
+                                                    :nav-stack [{:path []}]}))
+    (should= "Back: application" (#'sut/back-button-label {:namespace-path ["application" "state"]
+                                                           :nav-stack [{:path ["application"]}]})))
+
   (it "counts crossings between edges based on layer track/row points"
     (let [placement {0 {:track 0 :row 0}
                      1 {:track 1 :row 0}

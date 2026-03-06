@@ -66,7 +66,7 @@
   (or display-label label))
 
 (def ^:private toolbar-height 38.0)
-(def ^:private back-button-width 80.0)
+(def ^:private back-button-width 230.0)
 (def ^:private declutter-button-width 240.0)
 (def ^:private button-height 26.0)
 
@@ -85,6 +85,17 @@
     :concrete "Declutter: Concrete"
     :abstract "Declutter: Abstract"
     "Declutter: All"))
+
+(defn- back-button-label
+  [{:keys [namespace-path nav-stack]}]
+  (if-not (seq namespace-path)
+    "Back"
+    (let [target-path (or (:path (peek (vec (or nav-stack []))))
+                          (vec (drop-last (vec (or namespace-path [])))))
+          target-label (if (seq target-path)
+                         (str/join "." target-path)
+                         "root")]
+      (str "Back: " target-label))))
 
 (defn- back-button-rect
   []
@@ -981,10 +992,12 @@
     (apply-parallel-arrow-spacing edge-drawables points)))
 
 (defn- draw-toolbar
-  [{:keys [namespace-path declutter-mode]}]
+  [{:keys [namespace-path declutter-mode nav-stack]}]
   (let [back-rect (back-button-rect)
         declutter-rect (declutter-button-rect)
-        can-go-back? (seq namespace-path)]
+        can-go-back? (seq namespace-path)
+        back-label (back-button-label {:namespace-path namespace-path
+                                       :nav-stack nav-stack})]
     (q/no-stroke)
     (q/fill 238 242 246)
     (q/rect 0 0 3000 toolbar-height)
@@ -994,7 +1007,7 @@
       (q/fill 0 0 0)
       (q/fill 120 120 120))
     (q/text-align :center :center)
-    (q/text "Back" (+ (:x back-rect) (/ (:width back-rect) 2.0)) (+ (:y back-rect) (/ (:height back-rect) 2.0)))
+    (q/text back-label (+ (:x back-rect) (/ (:width back-rect) 2.0)) (+ (:y back-rect) (/ (:height back-rect) 2.0)))
     (q/fill 225)
     (q/rect (:x declutter-rect) (:y declutter-rect) (:width declutter-rect) (:height declutter-rect))
     (q/fill 0 0 0)
