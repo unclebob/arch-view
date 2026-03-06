@@ -590,6 +590,57 @@
                (segment-intersects-rect? x1 y1 x2 y2 rect)))
         rects))
 
+(defn- point-on-rect-edge?
+  [{:keys [x y width height]} px py]
+  (let [right (+ x width)
+        bottom (+ y height)
+        on-h (and (<= x px right)
+                  (or (< (Math/abs (- (double py) (double y))) 0.1)
+                      (< (Math/abs (- (double py) (double bottom))) 0.1)))
+        on-v (and (<= y py bottom)
+                  (or (< (Math/abs (- (double px) (double x))) 0.1)
+                      (< (Math/abs (- (double px) (double right))) 0.1)))]
+    (or on-h on-v)))
+
+(defn- segment-overlaps-rect-edge?
+  [[[x1 y1] [x2 y2]] {:keys [x y width height]}]
+  (let [right (+ x width)
+        bottom (+ y height)
+        overlap? (fn [a1 a2 b1 b2]
+                   (> (- (min (max a1 a2) (max b1 b2))
+                         (max (min a1 a2) (min b1 b2)))
+                      0.1))]
+    (cond
+      (< (Math/abs (- (double y1) (double y2))) 0.1)
+      (or (and (< (Math/abs (- (double y1) (double y))) 0.1)
+               (overlap? x1 x2 x right))
+          (and (< (Math/abs (- (double y1) (double bottom))) 0.1)
+               (overlap? x1 x2 x right)))
+
+      (< (Math/abs (- (double x1) (double x2))) 0.1)
+      (or (and (< (Math/abs (- (double x1) (double x))) 0.1)
+               (overlap? y1 y2 y bottom))
+          (and (< (Math/abs (- (double x1) (double right))) 0.1)
+               (overlap? y1 y2 y bottom)))
+
+      :else false)))
+
+(defn- segment-invalid-for-rect?
+  [idx last-idx segment rect edge]
+  (let [[[x1 y1] [x2 y2]] segment
+        intersects? (segment-intersects-rect? x1 y1 x2 y2 rect)
+        overlaps? (segment-overlaps-rect-edge? segment rect)
+        source-touch? (and (= idx 0) (= rect (:from-rect edge)))
+        target-touch? (and (= idx last-idx) (= rect (:to-rect edge)))
+        allowed-touch? (or source-touch? target-touch?)]
+    (cond
+      (not intersects?) false
+      overlaps? true
+      (not allowed-touch?) true
+      source-touch? (not (point-on-rect-edge? rect x1 y1))
+      target-touch? (not (point-on-rect-edge? rect x2 y2))
+      :else true)))
+
 (defn- clear-vertical-column?
   [x y1 y2 rects ignored]
   (not (segment-intersects-any-rect? x y1 x y2 rects ignored)))
@@ -690,11 +741,33 @@
                      path-points)]
       (-> adjusted vec compact-points orthogonalize-path))))
 
+(defn- enforce-source-perpendicular
+  [path-points from-side]
+  (if (or (nil? from-side)
+          (< (count path-points) 2))
+    path-points
+    (let [[sx sy] (first path-points)
+          [nx ny] (second path-points)
+          adjusted (case from-side
+                     (:top :bottom)
+                     (if (< (Math/abs (- (double sx) (double nx))) 0.1)
+                       path-points
+                       (concat [[sx sy] [sx ny]] (drop 2 path-points)))
+
+                     (:left :right)
+                     (if (< (Math/abs (- (double sy) (double ny))) 0.1)
+                       path-points
+                       (concat [[sx sy] [nx sy]] (drop 2 path-points)))
+
+                     path-points)]
+      (-> adjusted vec compact-points orthogonalize-path))))
+
 (defn- resolved-edge-path
   [points bounds edge]
   (when-let [{:keys [x1 y1 x2 y2 anchored? from-side to-side]} (resolved-edge-segment points bounds edge)]
     (if-not (needs-rectilinear-route? x1 y1 x2 y2 edge)
       {:points (-> [[x1 y1] [x2 y2]]
+                   (enforce-source-perpendicular from-side)
                    (enforce-target-perpendicular to-side)
                    orthogonalize-path)
        :anchored? anchored?}
@@ -710,6 +783,7 @@
             p3 [route-x y2]
             p4 [x2 y2]]
         {:points (-> (compact-points [[x1 y1] p1 p2 p3 p4])
+                     (enforce-source-perpendicular from-side)
                      (enforce-target-perpendicular to-side)
                      orthogonalize-path)
          :anchored? anchored?}))))
@@ -755,12 +829,12 @@
 
 (defn- path-clear-of-rectangles?
   [path-points edge]
-  (let [ignored (cond-> #{}
-                  (:from-rect edge) (conj (:from-rect edge))
-                  (:to-rect edge) (conj (:to-rect edge)))]
-    (not-any? (fn [[[x1 y1] [x2 y2]]]
-                (segment-intersects-any-rect? x1 y1 x2 y2 (:all-rects edge) ignored))
-              (path-segments path-points))))
+  (let [segments (vec (path-segments path-points))
+        last-idx (dec (count segments))]
+    (not-any? true?
+              (for [idx (range (count segments))
+                    rect (:all-rects edge)]
+                (segment-invalid-for-rect? idx last-idx (nth segments idx) rect edge)))))
 
 (defn- path-overlaps-existing?
   [path-points placed-segments]
