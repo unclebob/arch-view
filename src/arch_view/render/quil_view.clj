@@ -133,7 +133,6 @@
 (def ^:private racetrack-count 4)
 (def ^:private racetrack-margin 24.0)
 (def ^:private racetrack-gap 24.0)
-(def ^:private track-vertical-stagger-ratio 0.25)
 
 (defn- track-width-for
   [canvas-width]
@@ -300,10 +299,7 @@
                                                                   modules))]
                                {:index index
                                 :x (track-x-for (get-in placement-by-layer-index [index :track] 0) canvas-width)
-                                :y (+ (layer-y (get-in placement-by-layer-index [index :row] index) layer-height layer-gap)
-                                      (* track-vertical-stagger-ratio
-                                         layer-height
-                                         (double (get-in placement-by-layer-index [index :track] 0))))
+                                :y (layer-y (get-in placement-by-layer-index [index :row] index) layer-height layer-gap)
                                 :width (track-width-for canvas-width)
                                 :height layer-height
                                 :abstract? abstract-layer?

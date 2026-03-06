@@ -16,7 +16,6 @@
                (mapv :width (:layer-rects scene)))
       (should= true (every? #(<= 24.0 (:x %)) (:layer-rects scene)))
       (should= true (every? #(>= (:y %) 42.0) (:layer-rects scene)))
-      (should= true (> (count (distinct (map :y (:layer-rects scene)))) 1))
       (should= ["a" "c"]
                (->> (:module-positions scene)
                     (filter #(= 2 (:layer %)))
@@ -485,7 +484,7 @@
         (should= 110.0 x1)
         (should= 300.0 x2))))
 
-  (it "stagger layers vertically by track so rows are not horizontally aligned"
+  (it "does not force a fixed per-track vertical offset"
     (let [architecture {:layout {:layers [{:index 0 :modules ["a"]}
                                           {:index 1 :modules ["b"]}]
                                  :module->layer {"a" 0 "b" 1}}
@@ -494,8 +493,7 @@
           by-index (into {} (map (juxt :index identity) (:layer-rects scene)))
           y0 (:y (get by-index 0))
           y1 (:y (get by-index 1))]
-      (should-not= y0 y1)
-      (should= 30.0 (Math/abs (- y1 y0)))))
+      (should= y0 y1)))
 
   (it "avoids anchoring on rectangle corners for orthogonal arrows"
     (let [rect {:x 10.0 :y 20.0 :width 100.0 :height 60.0}
