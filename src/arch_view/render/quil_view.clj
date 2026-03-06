@@ -133,6 +133,7 @@
 (def ^:private racetrack-count 4)
 (def ^:private racetrack-margin 24.0)
 (def ^:private racetrack-gap 24.0)
+(def ^:private track-vertical-stagger-ratio 0.25)
 
 (defn- track-width-for
   [canvas-width]
@@ -234,7 +235,10 @@
                                                                   modules))]
                                {:index index
                                 :x (track-x-for (get-in placement-by-layer-index [index :track] 0) canvas-width)
-                                :y (layer-y (get-in placement-by-layer-index [index :row] index) layer-height layer-gap)
+                                :y (+ (layer-y (get-in placement-by-layer-index [index :row] index) layer-height layer-gap)
+                                      (* track-vertical-stagger-ratio
+                                         layer-height
+                                         (double (get-in placement-by-layer-index [index :track] 0))))
                                 :width (track-width-for canvas-width)
                                 :height layer-height
                                 :abstract? abstract-layer?
@@ -365,16 +369,6 @@
   [v lo hi]
   (-> v double (max lo) (min hi)))
 
-(def ^:private horizontal-delta-threshold 1.0)
-(def ^:private target-downward-bias-ratio 0.25)
-
-(defn- target-anchor-reference
-  [x1 y1 y2 to-rect]
-  (if (and to-rect
-           (<= (Math/abs (double (- y2 y1))) horizontal-delta-threshold))
-    [x1 (+ y1 (* target-downward-bias-ratio (double (:height to-rect))))]
-    [x1 y1]))
-
 (defn- rect-edge-anchor
   [{:keys [x y width height] :as rect} tx ty]
   (let [[cx cy] (rect-center rect)
@@ -424,8 +418,7 @@
         [base-x2 base-y2] (or to-point (let [{x :x y :y} (get points to)] [x y]))
         from-anchor (when from-rect (rect-edge-anchor from-rect base-x2 base-y2))
         [x1 y1] (or (:point from-anchor) [base-x1 base-y1])
-        [tx ty] (target-anchor-reference x1 y1 base-y2 to-rect)
-        to-anchor (when to-rect (rect-edge-anchor to-rect tx ty))
+        to-anchor (when to-rect (rect-edge-anchor to-rect x1 y1))
         [x2 y2] (or (:point to-anchor) [base-x2 base-y2])
         offset-x (clamp-offset raw-offset-x x1 x2 (:min-x bounds) (:max-x bounds))
         offset-y (clamp-offset raw-offset-y y1 y2 (:min-y bounds) (:max-y bounds))
@@ -584,9 +577,8 @@
                   [x1 y1] (if from-rect
                             (:point (rect-edge-anchor from-rect tx ty))
                             [sx sy])
-                  [tx2 ty2] (target-anchor-reference x1 y1 ty to-rect)
                   [x2 y2] (if to-rect
-                            (:point (rect-edge-anchor to-rect tx2 ty2))
+                            (:point (rect-edge-anchor to-rect x1 y1))
                             [tx ty])]
               [x1 y1 x2 y2]))
           (bbox [edge]

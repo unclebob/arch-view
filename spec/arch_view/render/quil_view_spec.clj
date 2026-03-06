@@ -15,7 +15,8 @@
       (should= [220.0 220.0 220.0]
                (mapv :width (:layer-rects scene)))
       (should= true (every? #(<= 24.0 (:x %)) (:layer-rects scene)))
-      (should= true (every? #(= 42.0 (:y %)) (:layer-rects scene)))
+      (should= true (every? #(>= (:y %) 42.0) (:layer-rects scene)))
+      (should= true (> (count (distinct (map :y (:layer-rects scene)))) 1))
       (should= ["a" "c"]
                (->> (:module-positions scene)
                     (filter #(= 2 (:layer %)))
@@ -469,21 +470,17 @@
         (should= 110.0 x1)
         (should= 300.0 x2))))
 
-  (it "biases near-horizontal target anchors downward by one quarter of target height"
-    (let [from-rect {:x 10.0 :y 20.0 :width 100.0 :height 60.0}
-          to-rect {:x 300.0 :y 20.0 :width 120.0 :height 80.0}
-          edge {:from "a"
-                :to "b"
-                :from-rect from-rect
-                :to-rect to-rect
-                :arrowhead :standard}
-          points {"a" {:x 50.0 :y 50.0}
-                  "b" {:x 350.0 :y 50.0}}
-          seg (#'sut/resolved-edge-segment points {:min-x 0.0 :max-x 1000.0 :min-y 0.0 :max-y 1000.0} edge)]
-      (should= 110.0 (:x1 seg))
-      (should= 300.0 (:x2 seg))
-      (should= 50.0 (:y1 seg))
-      (should= 70.0 (:y2 seg))))
+  (it "stagger layers vertically by track so rows are not horizontally aligned"
+    (let [architecture {:layout {:layers [{:index 0 :modules ["a"]}
+                                          {:index 1 :modules ["b"]}]
+                                 :module->layer {"a" 0 "b" 1}}
+                        :classified-edges #{}}
+          scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})
+          by-index (into {} (map (juxt :index identity) (:layer-rects scene)))
+          y0 (:y (get by-index 0))
+          y1 (:y (get by-index 1))]
+      (should-not= y0 y1)
+      (should= 30.0 (Math/abs (- y1 y0)))))
 
   (it "avoids anchoring on rectangle corners for orthogonal arrows"
     (let [rect {:x 10.0 :y 20.0 :width 100.0 :height 60.0}
