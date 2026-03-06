@@ -12,7 +12,7 @@
                         :classified-edges #{{:from "a" :to "b" :type :direct}
                                             {:from "c" :to "d" :type :abstract}}}
           scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})]
-      (should= [220.0 220.0 220.0]
+      (should= [171.2 171.2 171.2]
                (mapv :width (:layer-rects scene)))
       (should= true (every? #(<= 24.0 (:x %)) (:layer-rects scene)))
       (should= true (every? #(>= (:y %) 42.0) (:layer-rects scene)))
@@ -125,6 +125,10 @@
     (let [slots (#'sut/assign-layer-slots [0 1] [[0 1]] {0 0 1 1})]
       (should= true (<= (get-in slots [0 :row])
                         (get-in slots [1 :row])))))
+
+  (it "prefers center track for high fan-in layers"
+    (let [slots (#'sut/assign-layer-slots [0] [] {0 10})]
+      (should= 2 (get-in slots [0 :track]))))
 
   (it "finds hovered module by label hitbox"
     (let [modules [{:module "alpha.beta.core"

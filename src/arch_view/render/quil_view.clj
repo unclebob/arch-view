@@ -130,7 +130,7 @@
     :closed-triangle
     :standard))
 
-(def ^:private racetrack-count 4)
+(def ^:private racetrack-count 5)
 (def ^:private racetrack-margin 24.0)
 (def ^:private racetrack-gap 24.0)
 
@@ -280,8 +280,12 @@
                                                   placed-edge placed-edges
                                                   :when (edge-cross? placement* new-edge placed-edge)]
                                               true))
-                      crossing-cost (* 180.0 (double crossing-count))]
-                  (+ edge-shape-cost upward-cost crossing-cost)))
+                      crossing-cost (* 180.0 (double crossing-count))
+                      fan-in (double (get incoming-counts idx 0))
+                      center-track (/ (double (dec racetrack-count)) 2.0)
+                      center-distance (Math/abs (- (double track) center-track))
+                      center-cost (* fan-in 30.0 center-distance)]
+                  (+ edge-shape-cost upward-cost crossing-cost center-cost)))
               best (reduce (fn [best candidate]
                              (let [height-cost (* 100.0 (:row candidate))
                                    score (+ height-cost (connection-cost candidate))]
