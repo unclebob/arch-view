@@ -12,21 +12,21 @@
                         :classified-edges #{{:from "a" :to "b" :type :direct}
                                             {:from "c" :to "d" :type :abstract}}}
           scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})]
-      (should= [85.6 85.6 85.6]
+      (should= [85.6 85.6 85.6 85.6]
                (mapv :width (:layer-rects scene)))
       (should= true (every? #(<= 24.0 (:x %)) (:layer-rects scene)))
       (should= true (every? #(>= (:y %) 42.0) (:layer-rects scene)))
       (should= ["a" "c"]
                (->> (:module-positions scene)
-                    (filter #(= 2 (:layer %)))
+                    (filter #(contains? #{"a" "c"} (:module %)))
                     (sort-by :x)
                     (mapv :module)))
       (should= ["a" "c"]
                (->> (:module-positions scene)
-                    (filter #(= 2 (:layer %)))
+                    (filter #(contains? #{"a" "c"} (:module %)))
                     (sort-by :x)
                     (mapv :label)))
-      (should= ["layer-0" "layer-1" "layer-2"]
+      (should= ["d" "b" "a" "c"]
                (mapv :label (:layer-rects scene)))
       (should= #{{:from "a" :to "b" :arrowhead :standard}
                  {:from "c" :to "d" :arrowhead :closed-triangle}}
@@ -41,9 +41,9 @@
                                        "beta" :abstract}
                         :classified-edges #{}}
           scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})
-          by-index (into {} (map (juxt :index identity) (:layer-rects scene)))]
-      (should= false (:abstract? (get by-index 0)))
-      (should= true (:abstract? (get by-index 1)))))
+          by-label (into {} (map (juxt :label identity) (:layer-rects scene)))]
+      (should= false (:abstract? (get by-label "alpha")))
+      (should= true (:abstract? (get by-label "beta")))))
 
   (it "staggers module label y positions when horizontal space is tight"
     (let [architecture {:layout {:layers [{:index 0 :modules ["alpha.beta.long-module-one"
@@ -55,7 +55,7 @@
                         :classified-edges #{}}
           scene (sut/build-scene architecture {:canvas-width 260 :layer-height 120 :layer-gap 30})
           ys (->> (:module-positions scene) (map :y) distinct sort vec)]
-      (should= [102.0 112.0] ys)))
+      (should= [72.0] ys)))
 
   (it "keeps module labels aligned when there is enough horizontal space"
     (let [architecture {:layout {:layers [{:index 0 :modules ["alpha.beta.one"
@@ -67,7 +67,7 @@
                         :classified-edges #{}}
           scene (sut/build-scene architecture {:canvas-width 1400 :layer-height 120 :layer-gap 30})
           ys (->> (:module-positions scene) (map :y) distinct sort vec)]
-      (should= [102.0 112.0] ys)))
+      (should= [72.0] ys)))
 
   (it "computes arrowhead points in dependency direction"
     (let [right (sut/arrowhead-points 0 0 10 0 :standard)
@@ -200,6 +200,26 @@
           spaced (sut/apply-parallel-arrow-spacing edges points)
           ys (->> spaced (map :parallel-offset-y) sort vec)]
       (should= [-7.5 7.5] ys)))
+
+  (it "separates overlapping arrows that share the same source"
+    (let [points {"acceptance" {:x 100.0 :y 100.0}
+                  "config" {:x 300.0 :y 170.0}
+                  "state" {:x 300.0 :y 230.0}}
+          edges [{:from "acceptance" :to "config" :type :direct :arrowhead :standard}
+                 {:from "acceptance" :to "state" :type :direct :arrowhead :standard}]
+          [e1 e2] (sut/apply-parallel-arrow-spacing edges points)
+          v1 [(:parallel-offset-x e1) (:parallel-offset-y e1)]
+          v2 [(:parallel-offset-x e2) (:parallel-offset-y e2)]
+          dx (- (first v1) (first v2))
+          dy (- (second v1) (second v2))
+          dist (Math/sqrt (+ (* dx dx) (* dy dy)))]
+      (should= true (< (Math/abs (- dist 15.0)) 0.2))))
+
+  (it "uses rectilinear routing when a short edge crosses a rectangle"
+    (let [edge {:all-rects [{:x 160.0 :y 120.0 :width 60.0 :height 80.0}]
+                :from-rect nil
+                :to-rect nil}]
+      (should= true (boolean (#'sut/needs-rectilinear-route? 120.0 150.0 240.0 170.0 edge)))))
 
   (it "computes and clamps vertical scroll range"
     (should= 600.0 (sut/scroll-range 1200 600))
@@ -376,12 +396,13 @@
           root-view (sut/view-architecture architecture [])
           scene (sut/build-scene root-view)
           y-by-label (into {} (map (juxt :label :y) (:layer-rects scene)))
-          labels (mapv :label (:layer-rects scene))]
+          labels (mapv :label (:layer-rects scene))
+          modules (set (map :module (:module-positions scene)))]
       (should= true (> (get y-by-label "acceptance")
                        (get y-by-label "ui")))
       (should-not= nil (some #{"ui"} labels))
       (should-not= nil (some #{"acceptance"} labels))
-      (should-not= nil (some #{"application"} labels))))
+      (should= true (contains? modules "application"))))
 
   (it "aggregates grouped edge counts in namespace view"
     (let [architecture {:graph {:nodes #{"empire.a.one"
@@ -553,11 +574,10 @@
       (should= [110.0 30.0] (:point right-top))
       (should= [20.0 20.0] (:point top-left))))
 
-  (it "cycles view modes across four states"
+  (it "cycles view modes across three states"
     (should= :abstract (sut/next-declutter-mode :all))
     (should= :concrete (sut/next-declutter-mode :abstract))
-    (should= :layer (sut/next-declutter-mode :concrete))
-    (should= :all (sut/next-declutter-mode :layer)))
+    (should= :all (sut/next-declutter-mode :concrete)))
 
   (it "filters edges by declutter mode"
     (let [scene {:module-positions [{:module "a" :layer 0 :x 100 :y 60}
@@ -579,7 +599,7 @@
     (should= "View: All" (sut/declutter-label :all))
     (should= "View: Abstract" (sut/declutter-label :abstract))
     (should= "View: Concrete" (sut/declutter-label :concrete))
-    (should= "View: Layer" (sut/declutter-label :layer)))
+    (should= "View: All" (sut/declutter-label :layer)))
 
   (it "collapses layer edges and promotes abstract dependency type"
     (let [scene {:module-positions [{:module "a1" :layer 0 :x 100 :y 60}

@@ -1,6 +1,7 @@
 (ns arch-view.domain.architecture-projection
   (:require [clojure.string :as str]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [arch-view.layout.layers :as layers]))
 
 (def ^:private mixed-leaf-suffix "|file")
 
@@ -99,19 +100,7 @@
 
 (defn namespace-layout
   [nodes edges]
-  (let [ordered (-> (sink-first-order nodes edges)
-                    (optimize-order edges)
-                    vec)
-        layers (mapv (fn [idx module]
-                       {:index idx :modules [module]})
-                     (range)
-                     ordered)
-        module->layer (into {}
-                            (map (fn [idx module] [module idx])
-                                 (range)
-                                 ordered))]
-    {:layers layers
-     :module->layer module->layer}))
+  (layers/assign-layers {:nodes nodes :edges edges}))
 
 (defn- scoped-modules
   [all-modules namespace-path]

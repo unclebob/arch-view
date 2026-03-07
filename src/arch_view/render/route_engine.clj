@@ -19,6 +19,8 @@
             final-path (if (seq route-points) route-points base-path)
             edge' (assoc edge
                          :route-points final-path
+                         :from-side (:from-side edge+)
+                         :to-side (:to-side edge+)
                          :anchored? (boolean (or (:from-rect edge) (:to-rect edge))))]
         (if (seq final-path)
           (recur (rest remaining)

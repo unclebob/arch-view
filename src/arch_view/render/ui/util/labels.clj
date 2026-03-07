@@ -29,21 +29,22 @@
   [{:keys [display-label label]}]
   (or display-label label))
 
-(def declutter-modes [:all :abstract :concrete :layer])
+(def declutter-modes [:all :abstract :concrete])
 
 (defn next-declutter-mode
   [mode]
   (let [idx (.indexOf ^java.util.List declutter-modes (or mode :all))
-        current (if (neg? idx) 0 idx)
-        next-idx (mod (inc current) (count declutter-modes))]
-    (nth declutter-modes next-idx)))
+        current (if (neg? idx) nil idx)]
+    (if (nil? current)
+      :all
+      (let [next-idx (mod (inc current) (count declutter-modes))]
+        (nth declutter-modes next-idx)))))
 
 (defn declutter-label
   [mode]
   (case mode
     :abstract "View: Abstract"
     :concrete "View: Concrete"
-    :layer "View: Layer"
     "View: All"))
 
 (defn- overlap?

@@ -45,6 +45,12 @@ Open Quil viewer:
 clojure -M -m arch-view.core --project-path /path/to/project
 ```
 
+Open Quil viewer without expensive routing (faster startup, simpler arrows):
+
+```bash
+clojure -M -m arch-view.core --project-path /path/to/project --skip-routing
+```
+
 Example test case project:
 
 ```bash

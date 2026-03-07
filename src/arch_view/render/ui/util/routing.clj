@@ -221,14 +221,21 @@
   [indexed points]
   (let [size (count indexed)
         boxes (mapv (comp #(spacing-bbox points %) :edge) indexed)
-        dirs (mapv (comp #(spacing-unit-dir points %) :edge) indexed)]
+        dirs (mapv (comp #(spacing-unit-dir points %) :edge) indexed)
+        edges (mapv :edge indexed)]
     (reduce (fn [acc [i j]]
-              (if (and (bbox-overlap? (nth boxes i) (nth boxes j))
-                       (parallel-ish? (nth dirs i) (nth dirs j)))
+              (let [ei (nth edges i)
+                    ej (nth edges j)
+                    same-endpoint? (or (= (:from ei) (:from ej))
+                                       (= (:to ei) (:to ej)))
+                    overlap? (bbox-overlap? (nth boxes i) (nth boxes j))
+                    parallel? (parallel-ish? (nth dirs i) (nth dirs j))]
+                (if (or same-endpoint?
+                        (and overlap? parallel?))
                 (-> acc
                     (update i (fnil conj #{}) j)
                     (update j (fnil conj #{}) i))
-                acc))
+                  acc)))
             {}
             (for [i (range size)
                   j (range (inc i) size)]

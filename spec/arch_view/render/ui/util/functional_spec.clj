@@ -68,13 +68,13 @@
     (should= "View: All" (sut/declutter-label :all))
     (should= "View: Abstract" (sut/declutter-label :abstract))
     (should= "View: Concrete" (sut/declutter-label :concrete))
-    (should= "View: Layer" (sut/declutter-label :layer))
+    (should= "View: All" (sut/declutter-label :layer))
     (should= "View: All" (sut/declutter-label :unknown)))
 
   (it "cycles declutter mode and anchors on rectangle edges"
     (should= :abstract (sut/next-declutter-mode :all))
     (should= :concrete (sut/next-declutter-mode :abstract))
-    (should= :layer (sut/next-declutter-mode :concrete))
+    (should= :all (sut/next-declutter-mode :concrete))
     (should= :all (sut/next-declutter-mode :layer))
     (let [rect {:x 10.0 :y 20.0 :width 100.0 :height 80.0}]
       (should= :right (:side (sut/rect-edge-anchor rect 200.0 50.0)))

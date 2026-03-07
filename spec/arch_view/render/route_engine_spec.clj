@@ -29,4 +29,14 @@
                 :normalize-route-endpoints (fn [_ _] [])
                 :place-non-overlapping-path (fn [_ _ _] nil)
                 :path-segments (fn [_] [])})]
-      (should= [] out))))
+      (should= [] out)))
+
+  (it "falls back to base path when overlap resolver rejects it"
+    (let [out (sut/route-edges
+               {:spaced-edges [{:id :e1 :from "a" :to "b"}]
+                :resolve-edge-path (fn [_] {:points [[0 0] [10 0]]})
+                :normalize-route-endpoints (fn [points _] points)
+                :place-non-overlapping-path (fn [_ _ _] nil)
+                :path-segments (fn [points] (map vector points (rest points)))})]
+      (should= 1 (count out))
+      (should= [[0 0] [10 0]] (:route-points (first out))))))

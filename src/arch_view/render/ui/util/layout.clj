@@ -266,17 +266,37 @@
 
 (defn- compute-layer-placement
   [architecture]
-  (let [layers (get-in architecture [:layout :layers])
-        raw-layer-indexes (->> layers (map :index) sort vec)
-        module->layer (get-in architecture [:layout :module->layer] {})
-        layer-pairs (dependency-pairs-by-layer (:classified-edges architecture) module->layer)
-        incoming-counts (incoming-counts-by-layer raw-layer-indexes layer-pairs)
-        ordered-layer-indexes (->> raw-layer-indexes
-                                   (sort-by (fn [idx] [(get incoming-counts idx 0) idx]))
-                                   vec)]
-    {:layers layers
-     :layer-by-index (into {} (map (juxt :index identity) layers))
-     :placement-by-layer-index (assign-layer-slots ordered-layer-indexes layer-pairs incoming-counts)}))
+  (let [raw-layers (get-in architecture [:layout :layers])
+        ordered-levels (->> raw-layers (map :index) distinct sort vec)
+        level->row (into {}
+                         (map-indexed (fn [row idx] [idx row]) ordered-levels))
+        expanded-layers
+        (->> raw-layers
+             (sort-by :index)
+             (mapcat (fn [{:keys [index modules]}]
+                       (let [ordered-modules (->> modules sort vec)
+                             peer-count (count ordered-modules)]
+                         (map-indexed (fn [peer-idx module]
+                                        {:index [index module]
+                                         :level index
+                                         :modules [module]
+                                         :peer-idx peer-idx
+                                         :peer-count (max 1 peer-count)})
+                                      ordered-modules))))
+             vec)
+        row-by-layer-index (into {}
+                                 (map (fn [{:keys [index level]}]
+                                        [index (get level->row level 0)])
+                                      expanded-layers))
+        peer-by-layer-index (into {}
+                                  (map (fn [{:keys [index peer-idx peer-count]}]
+                                         [index {:peer-idx peer-idx
+                                                 :peer-count peer-count}])
+                                       expanded-layers))]
+    {:layers expanded-layers
+     :layer-by-index (into {} (map (juxt :index identity) expanded-layers))
+     :row-by-layer-index row-by-layer-index
+     :peer-by-layer-index peer-by-layer-index}))
 
 (defn- scene-inputs
   [architecture]
@@ -294,22 +314,33 @@
      :rect-x-offset (/ (- track-width rect-width) 2.0)
      :rect-y-offset (/ (- layer-height rect-height) 2.0)}))
 
+(defn- centered-peer-x
+  [canvas-width rect-width peer-idx peer-count]
+  (let [center-x (/ (double canvas-width) 2.0)
+        spacing (* rect-width 1.5)
+        group-width (+ rect-width (* (double (dec (max 1 peer-count))) spacing))
+        group-start (- center-x (/ group-width 2.0))]
+    (+ group-start (* (double peer-idx) spacing))))
+
 (defn- layer-rect-entry
-  [layer-by-index layer placement module->component module->kind module->full-name layer->label
-   canvas-width layer-height layer-gap geometry]
+  [layer-by-index layer row-by-layer-index peer-by-layer-index module->component module->kind module->full-name layer->label
+   canvas-width geometry]
   (let [{:keys [index]} layer
         modules (:modules (get layer-by-index index))
         component (dominant-component modules module->component)
         abstract-layer? (boolean (some #(= :abstract (get module->kind %)) modules))
-        {:keys [rect-width rect-height rect-x-offset rect-y-offset]} geometry]
+        {:keys [rect-width rect-height]} geometry
+        row (double (get row-by-layer-index index 0))
+        {:keys [peer-idx peer-count]} (get peer-by-layer-index index {:peer-idx 0 :peer-count 1})]
     {:index index
-     :x (+ (track-x-for (get-in placement [index :track] 0) canvas-width) rect-x-offset)
-     :y (+ (layer-y (get-in placement [index :row] index) layer-height layer-gap) rect-y-offset)
+     :x (centered-peer-x canvas-width rect-width peer-idx peer-count)
+     :y (+ scene-top-padding (* row (* rect-height 1.5)))
      :width rect-width
      :height rect-height
      :abstract? abstract-layer?
      :full-name (some-> modules first module->full-name labels/strip-top-namespace)
      :label (or (get layer->label index)
+                (some-> modules first labels/abbreviate-module-name)
                 (if component (name component) (str "layer-" index)))}))
 
 (defn- decorate-module-position
@@ -333,28 +364,32 @@
 
 (defn- scene-edge-drawables
   [architecture]
-  (->> (:classified-edges architecture)
+  (let [feedback-pairs (->> (get-in architecture [:layout :feedback-edges] #{})
+                            (map (juxt :from :to))
+                            set)]
+    (->> (:classified-edges architecture)
        (map (fn [{:keys [from to type count]}]
               {:from from
                :to to
                :count (long (or count 1))
                :arrowhead (arrowhead-for type)
-               :type type}))
-       vec))
+               :type type
+               :cycle-break? (contains? feedback-pairs [from to])}))
+       vec)))
 
 (defn build-scene
   ([architecture]
    (build-scene architecture {}))
   ([architecture {:keys [canvas-width layer-height layer-gap]
                   :or {canvas-width 1200 layer-height 140 layer-gap 24}}]
-   (let [{:keys [layers layer-by-index placement-by-layer-index module->component layer->label module->kind
+   (let [{:keys [layers layer-by-index row-by-layer-index peer-by-layer-index module->component layer->label module->kind
                  module->leaf? module->source-file module->full-name module->display-label]}
          (scene-inputs architecture)
          geometry (layer-rect-geometry canvas-width layer-height)
          layer-rects (mapv (fn [layer]
-                             (layer-rect-entry layer-by-index layer placement-by-layer-index
+                             (layer-rect-entry layer-by-index layer row-by-layer-index peer-by-layer-index
                                                module->component module->kind module->full-name layer->label
-                                               canvas-width layer-height layer-gap geometry))
+                                               canvas-width geometry))
                            layers)
          rect-by-layer (into {} (map (juxt :index identity) layer-rects))]
      {:layer-rects layer-rects

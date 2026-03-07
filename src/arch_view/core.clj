@@ -40,7 +40,7 @@
 (defn parse-args
   [args]
   (loop [remaining args
-         opts {:project-path "." :in-edn nil :no-gui false :out nil}]
+         opts {:project-path "." :in-edn nil :no-gui false :skip-routing false :out nil}]
     (if (empty? remaining)
       opts
       (let [arg (first remaining)]
@@ -53,6 +53,8 @@
                                  (assoc opts :out (second remaining)))
           (= "--no-gui" arg) (recur (next remaining)
                                     (assoc opts :no-gui true))
+          (= "--skip-routing" arg) (recur (next remaining)
+                                          (assoc opts :skip-routing true))
           :else (recur (next remaining) opts))))))
 
 (defn exit-program!
@@ -61,7 +63,7 @@
   (System/exit 0))
 
 (defn -main [& args]
-  (let [{:keys [project-path in-edn no-gui out]} (parse-args args)
+  (let [{:keys [project-path in-edn no-gui skip-routing out]} (parse-args args)
         architecture (if in-edn
                        (load-architecture-edn in-edn)
                        (load-architecture project-path))
@@ -74,6 +76,7 @@
       (spit out (pr-str architecture)))
     (when-not no-gui
       (-> (render/show! scene {:title (str "architecture-viewer: " (str/trim source-label))
-                               :architecture architecture})
+                               :architecture architecture
+                               :skip-routing? skip-routing})
           (render/wait-until-closed!))
       (exit-program!))))

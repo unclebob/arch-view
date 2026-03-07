@@ -103,7 +103,7 @@
                                                         :point-in-rect? (fn [rect x y] false)
                                                         :declutter-button-rect (fn [] {:hit [5.0 5.0]})
                                                         :point-in-rect? (fn [rect x y] (= [x y] (:hit rect)))
-                                                        :next-declutter-mode (fn [_] :layer)))
+                                                        :next-declutter-mode (fn [_] :abstract)))
           drilldown-hit (sut/handle-mouse-released {:dragging-scrollbar? false
                                                     :scene {}
                                                     :namespace-path []
@@ -119,7 +119,7 @@
                                                           :drilldown-scene (fn [s _ _ _] (assoc s :drilled true))))]
       (should= false (:dragging-scrollbar? dragged))
       (should= nil (:drag-offset dragged))
-      (should= :layer (:declutter-mode toolbar-hit))
+      (should= :abstract (:declutter-mode toolbar-hit))
       (should= true (:drilled drilldown-hit))))
 
   (it "keeps state when drilldown click hits nothing and opens source for leaf click"

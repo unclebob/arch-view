@@ -263,12 +263,21 @@
         ry-lo (+ ry corner-inset)
         ry-hi (- (+ ry rh) corner-inset)
         right (+ rx rw)
-        bottom (+ ry rh)]
+        bottom (+ ry rh)
+        side-parallel-offset (if (#{:top :bottom} side)
+                               (if (>= (Math/abs (double offset-x))
+                                       (Math/abs (double offset-y)))
+                                 offset-x
+                                 offset-y)
+                               (if (>= (Math/abs (double offset-y))
+                                       (Math/abs (double offset-x)))
+                                 offset-y
+                                 offset-x))]
     (case side
-      :left [rx (clamp-between (+ y offset-y) ry-lo ry-hi)]
-      :right [right (clamp-between (+ y offset-y) ry-lo ry-hi)]
-      :top [(clamp-between (+ x offset-x) rx-lo rx-hi) ry]
-      :bottom [(clamp-between (+ x offset-x) rx-lo rx-hi) bottom]
+      :left [rx (clamp-between (+ y side-parallel-offset) ry-lo ry-hi)]
+      :right [right (clamp-between (+ y side-parallel-offset) ry-lo ry-hi)]
+      :top [(clamp-between (+ x side-parallel-offset) rx-lo rx-hi) ry]
+      :bottom [(clamp-between (+ x side-parallel-offset) rx-lo rx-hi) bottom]
       [(+ x offset-x) (+ y offset-y)])))
 
 (defn- edge-point-for
@@ -474,15 +483,11 @@
 
 (defn- needs-rectilinear-route?
   [x1 y1 x2 y2 {:keys [all-rects from-rect to-rect]}]
-  (let [dx (Math/abs (double (- x2 x1)))
-        dy (Math/abs (double (- y2 y1)))
-        long-edge? (> (+ dx dy) 280.0)
-        crosses? (some (fn [rect]
-                         (and (not= rect from-rect)
-                              (not= rect to-rect)
-                              (segment-intersects-rect? x1 y1 x2 y2 rect)))
-                       all-rects)]
-    (and long-edge? crosses?)))
+  (some (fn [rect]
+          (and (not= rect from-rect)
+               (not= rect to-rect)
+               (segment-intersects-rect? x1 y1 x2 y2 rect)))
+        all-rects))
 
 (defn- compact-points
   [points]
@@ -494,6 +499,23 @@
                 acc
                 (conj acc p))
               (conj acc p)))
+          []
+          points))
+
+(defn- point-close?
+  [[ax ay] [bx by]]
+  (< (+ (Math/abs (- (double ax) (double bx)))
+        (Math/abs (- (double ay) (double by))))
+     0.1))
+
+(defn- remove-retraces
+  [points]
+  (reduce (fn [acc p]
+            (let [n (count acc)]
+              (if (and (>= n 2)
+                       (point-close? p (nth acc (- n 2))))
+                (pop acc)
+                (conj acc p))))
           []
           points))
 
@@ -515,7 +537,9 @@
          compact-points)))
 
 (declare adjust-target-perpendicular
-         adjust-source-perpendicular)
+         adjust-source-perpendicular
+         path-clear-of-rectangles?
+         normalize-route-endpoints)
 
 (defn- enforce-target-perpendicular
   [path-points to-side]
@@ -617,11 +641,20 @@
 (defn- resolved-edge-path
   [points bounds edge]
   (when-let [{:keys [x1 y1 x2 y2] :as segment} (resolved-edge-segment points bounds edge)]
-    (if (needs-rectilinear-route? x1 y1 x2 y2 edge)
-      (resolved-rectilinear-edge-path bounds edge segment)
-      (resolved-direct-edge-path segment))))
+    (let [direct (resolved-direct-edge-path segment)]
+      (if (or (needs-rectilinear-route? x1 y1 x2 y2 edge)
+              (not (path-clear-of-rectangles? (:points direct) edge)))
+        (resolved-rectilinear-edge-path bounds edge segment)
+        direct))))
 
 (def ^:private min-sidestep 10.0)
+(def ^:private route-grid-step 10.0)
+(def ^:private a-star-max-iterations 3000)
+(def ^:private global-optimize-max-iterations 2)
+(def ^:private global-optimize-max-conflicted 12)
+(def ^:private max-route-segments 3)
+(def ^:private route-quality-mode :fast)
+(def ^:private balanced-reroute-limit 8)
 
 (defn- path-segments
   [path-points]
@@ -678,11 +711,12 @@
 (defn- nudge-path
   [path-points dx dy]
   (let [count-points (count path-points)]
-    (if (<= count-points 2)
+    (if (<= count-points 0)
       (vec path-points)
       (->> path-points
            (map-indexed (fn [idx [x y]]
-                          (if (or (zero? idx) (= idx (dec count-points)))
+                          (if (and (> count-points 2)
+                                   (or (zero? idx) (= idx (dec count-points))))
                             [x y]
                             [(+ (double x) (double dx))
                              (+ (double y) (double dy))])))
@@ -702,6 +736,328 @@
                    (nudge-path path-points step 0.0))]
     (vec (concat base y-nudges x-nudges))))
 
+(defn- perimeter-candidates
+  [path-points {:keys [min-x max-x min-y max-y]}]
+  (if (or (nil? min-x) (nil? max-x) (nil? min-y) (nil? max-y) (< (count path-points) 2))
+    []
+    (let [[sx sy] (first path-points)
+          [tx ty] (last path-points)
+          lane-step 12.0
+          lanes (range 0 30)
+          left-xs (map #(clamp-between (+ (double min-x) (* lane-step %)) min-x max-x) lanes)
+          right-xs (map #(clamp-between (- (double max-x) (* lane-step %)) min-x max-x) lanes)
+          top-ys (map #(clamp-between (+ (double min-y) (* lane-step %)) min-y max-y) lanes)
+          bottom-ys (map #(clamp-between (- (double max-y) (* lane-step %)) min-y max-y) lanes)
+          via-left (map (fn [x] [[sx sy] [x sy] [x ty] [tx ty]]) left-xs)
+          via-right (map (fn [x] [[sx sy] [x sy] [x ty] [tx ty]]) right-xs)
+          via-top (map (fn [y] [[sx sy] [sx y] [tx y] [tx ty]]) top-ys)
+          via-bottom (map (fn [y] [[sx sy] [sx y] [tx y] [tx ty]]) bottom-ys)]
+      (vec (concat via-left via-right via-top via-bottom)))))
+
+(defn- snap-grid
+  [v]
+  (* route-grid-step
+     (double (Math/round (/ (double v) route-grid-step)))))
+
+(defn- unique-sorted
+  [values]
+  (->> values
+       (filter number?)
+       (map snap-grid)
+       distinct
+       sort
+       vec))
+
+(defn- route-grid-axes
+  [path-points {:keys [route-bounds all-rects]} placed-segments]
+  (let [{min-x0 :min-x max-x0 :max-x min-y0 :min-y max-y0 :max-y} route-bounds
+        [sx sy] (first path-points)
+        [tx ty] (last path-points)
+        edge-pad 10.0
+        x-from-rects (mapcat (fn [{:keys [x width]}]
+                               [(- x edge-pad)
+                                x
+                                (+ x width)
+                                (+ x width edge-pad)])
+                             all-rects)
+        y-from-rects (mapcat (fn [{:keys [y height]}]
+                               [(- y edge-pad)
+                                y
+                                (+ y height)
+                                (+ y height edge-pad)])
+                             all-rects)
+        x-from-segments (mapcat (fn [[[x1 _] [x2 _]]] [x1 x2]) placed-segments)
+        y-from-segments (mapcat (fn [[[_ y1] [_ y2]]] [y1 y2]) placed-segments)
+        raw-xs (concat [sx tx]
+                       (mapcat (fn [[[x1 _] [x2 _]]] [x1 x2]) placed-segments)
+                       (mapcat (fn [{:keys [x width]}] [x (+ x width)]) all-rects))
+        raw-ys (concat [sy ty]
+                       (mapcat (fn [[[_ y1] [_ y2]]] [y1 y2]) placed-segments)
+                       (mapcat (fn [{:keys [y height]}] [y (+ y height)]) all-rects))
+        xs-num (seq (map double (filter number? raw-xs)))
+        ys-num (seq (map double (filter number? raw-ys)))
+        min-x (or min-x0 (if xs-num (- (apply min xs-num) 40.0) 14.0))
+        max-x (or max-x0 (if xs-num (+ (apply max xs-num) 40.0) 1200.0))
+        min-y (or min-y0 (if ys-num (- (apply min ys-num) 40.0) 14.0))
+        max-y (or max-y0 (if ys-num (+ (apply max ys-num) 40.0) 1200.0))
+        x-candidates (concat [min-x max-x sx tx]
+                             x-from-rects
+                             x-from-segments)
+        y-candidates (concat [min-y max-y sy ty]
+                             y-from-rects
+                             y-from-segments)
+        xs (->> x-candidates (filter #(<= min-x % max-x)) unique-sorted)
+        ys (->> y-candidates (filter #(<= min-y % max-y)) unique-sorted)
+        min-x* (snap-grid min-x)
+        max-x* (snap-grid max-x)
+        min-y* (snap-grid min-y)
+        max-y* (snap-grid max-y)
+        full-xs (->> (range (long min-x*) (inc (long max-x*)) (long route-grid-step))
+                     (map double)
+                     (concat xs)
+                     unique-sorted)
+        full-ys (->> (range (long min-y*) (inc (long max-y*)) (long route-grid-step))
+                     (map double)
+                     (concat ys)
+                     unique-sorted)]
+    {:xs full-xs :ys full-ys}))
+
+(defn- path-overlap-count
+  [path-points placed-segments]
+  (count
+   (for [segment (path-segments path-points)
+         :when (some #(collinear-overlap? segment %) placed-segments)]
+     true)))
+
+(defn- axis-neighbors
+  [vals v]
+  (let [idx (.indexOf ^java.util.List vals v)
+        prev-v (when (> idx 0) (nth vals (dec idx)))
+        next-v (when (and (>= idx 0) (< idx (dec (count vals)))) (nth vals (inc idx)))]
+    (cond-> []
+      prev-v (conj prev-v)
+      next-v (conj next-v))))
+
+(defn- segment-direction
+  [[[x1 y1] [x2 y2]]]
+  (if (< (Math/abs (- (double x1) (double x2))) 0.1) :v :h))
+
+(defn- segment-cost
+  [segment edge placed-segments mode prev-dir]
+  (let [[[x1 y1] [x2 y2]] segment
+        len (+ (Math/abs (- (double x2) (double x1)))
+               (Math/abs (- (double y2) (double y1))))
+        ignored (edge-ignored-rects edge)
+        rect-hit? (segment-intersects-any-rect? x1 y1 x2 y2 (:all-rects edge) ignored)
+        overlap? (some #(collinear-overlap? segment %) placed-segments)
+        block-rect? (contains? #{:strict :no-rect} mode)
+        block-overlap? (= :strict mode)
+        dir (segment-direction segment)
+        turn? (and prev-dir (not= prev-dir dir))
+        impossible? (or (< len 0.1)
+                        (and block-rect? rect-hit?)
+                        (and block-overlap? overlap?))
+        penalty (+ (if turn? 20.0 0.0)
+                   (if rect-hit? 1000000.0 0.0)
+                   (if overlap? 200000.0 0.0))]
+    (when-not impossible?
+      (+ len penalty))))
+
+(defn- manhattan
+  [[x y] [tx ty]]
+  (+ (Math/abs (- (double tx) (double x)))
+     (Math/abs (- (double ty) (double y)))))
+
+(defn- reconstruct-path
+  [came state]
+  (loop [s state
+         rev []]
+    (let [[node _] s
+          rev' (conj rev node)]
+      (if-let [p (get came s)]
+        (recur p rev')
+        (->> rev' reverse vec)))))
+
+(defn- a*-orthogonal-path
+  [path-points edge placed-segments mode]
+  (when (>= (count path-points) 2)
+    (let [{:keys [xs ys]} (route-grid-axes path-points edge placed-segments)
+          start [(snap-grid (first (first path-points)))
+                 (snap-grid (second (first path-points)))]
+          goal [(snap-grid (first (last path-points)))
+                (snap-grid (second (last path-points)))]
+          xs (if (some #{(first start)} xs) xs (unique-sorted (conj xs (first start))))
+          xs (if (some #{(first goal)} xs) xs (unique-sorted (conj xs (first goal))))
+          ys (if (some #{(second start)} ys) ys (unique-sorted (conj ys (second start))))
+          ys (if (some #{(second goal)} ys) ys (unique-sorted (conj ys (second goal))))
+          start-state [start nil]]
+      (loop [open [start-state]
+             came {}
+             g {start-state 0.0}
+             iterations 0]
+        (if (or (empty? open) (> iterations a-star-max-iterations))
+          nil
+          (let [state (apply min-key (fn [s] (+ (get g s Double/POSITIVE_INFINITY)
+                                                (manhattan (first s) goal)))
+                             open)
+                open' (vec (remove #(= % state) open))
+                [node prev-dir] state]
+            (if (= node goal)
+              (reconstruct-path came state)
+              (let [[x y] node
+                    neighbors (concat
+                               (for [nx (axis-neighbors xs x)] [nx y])
+                               (for [ny (axis-neighbors ys y)] [x ny]))]
+                (let [[open-next came-next g-next]
+                      (reduce (fn [[o c gmap] n]
+                                (let [segment [node n]
+                                      step-cost (segment-cost segment edge placed-segments mode prev-dir)
+                                      dir (segment-direction segment)]
+                                  (if (nil? step-cost)
+                                    [o c gmap]
+                                    (let [next-state [n dir]
+                                          tentative (+ (get gmap state Double/POSITIVE_INFINITY) step-cost)]
+                                      (if (< tentative (get gmap next-state Double/POSITIVE_INFINITY))
+                                        [(if (some #(= % next-state) o) o (conj o next-state))
+                                         (assoc c next-state state)
+                                         (assoc gmap next-state tentative)]
+                                        [o c gmap])))))
+                              [open' came g]
+                              neighbors)]
+                  (recur open-next came-next g-next (inc iterations)))))))))))
+
+(defn- path-length
+  [path-points]
+  (reduce + 0.0
+          (for [[[x1 y1] [x2 y2]] (path-segments path-points)]
+            (+ (Math/abs (- (double x2) (double x1)))
+               (Math/abs (- (double y2) (double y1)))))))
+
+(defn- bend-count
+  [path-points]
+  (let [segments (vec (path-segments path-points))]
+    (count (for [i (range 1 (count segments))
+                 :let [d1 (segment-direction (nth segments (dec i)))
+                       d2 (segment-direction (nth segments i))]
+                 :when (not= d1 d2)]
+             true))))
+
+(defn- path-violation-counts
+  [path-points edge placed-segments]
+  (let [segments (vec (path-segments path-points))
+        last-idx (dec (count segments))
+        rect-viol (count
+                   (for [idx (range (count segments))
+                         rect (:all-rects edge)
+                         :when (segment-invalid-for-rect? idx last-idx (nth segments idx) rect edge)]
+                     true))
+        overlap-viol (count
+                      (for [segment segments
+                            :when (some #(collinear-overlap? segment %) placed-segments)]
+                        true))]
+    {:rect rect-viol :overlap overlap-viol}))
+
+(defn- path-score
+  [path-points edge placed-segments]
+  (let [{:keys [rect overlap]} (path-violation-counts path-points edge placed-segments)]
+    (+ (path-length path-points)
+       (* 45.0 (bend-count path-points))
+       (* 1000000.0 rect)
+       (* 200000.0 overlap))))
+
+(defn- cap-segment-count
+  [path-points edge placed-segments]
+  (let [segments (vec (path-segments path-points))]
+    (if (<= (count segments) max-route-segments)
+      path-points
+      (let [[sx sy] (first path-points)
+            [tx ty] (last path-points)
+            {:keys [min-x max-x min-y max-y]} (:route-bounds edge)
+            sx (snap-grid sx)
+            sy (snap-grid sy)
+            tx (snap-grid tx)
+            ty (snap-grid ty)
+            base-xs (concat [sx tx]
+                            (map first path-points)
+                            (when (number? min-x) [min-x])
+                            (when (number? max-x) [max-x]))
+            base-ys (concat [sy ty]
+                            (map second path-points)
+                            (when (number? min-y) [min-y])
+                            (when (number? max-y) [max-y]))
+            x-options (->> base-xs (filter number?) unique-sorted (take 8))
+            y-options (->> base-ys (filter number?) unique-sorted (take 8))
+            hv [[sx sy] [tx sy] [tx ty]]
+            vh [[sx sy] [sx ty] [tx ty]]
+            via-x (for [x x-options]
+                    [[sx sy] [x sy] [x ty] [tx ty]])
+            via-y (for [y y-options]
+                    [[sx sy] [sx y] [tx y] [tx ty]])
+            candidates (->> (concat [[[sx sy] [tx ty]]]
+                                     [hv vh]
+                                     via-x
+                                     via-y)
+                            (map (fn [candidate]
+                                   (-> candidate
+                                       vec
+                                       orthogonalize-path
+                                       remove-retraces
+                                       compact-points)))
+                            (filter #(>= (count %) 2))
+                            (filter #(<= (count (path-segments %)) max-route-segments))
+                            distinct
+                            vec)]
+        (if (seq candidates)
+          (apply min-key #(path-score % edge placed-segments) candidates)
+          (->> path-points
+               (take (inc max-route-segments))
+               vec
+               orthogonalize-path
+               remove-retraces
+               compact-points))))))
+
+(defn- template-candidates
+  [path-points edge]
+  (let [normalized-base (normalize-route-endpoints path-points edge)]
+    (if (< (count normalized-base) 2)
+      [normalized-base]
+      (let [[sx sy] (first normalized-base)
+            [tx ty] (last normalized-base)
+            {:keys [min-x max-x min-y max-y]} (:route-bounds edge)
+            sx (snap-grid sx)
+            sy (snap-grid sy)
+            tx (snap-grid tx)
+            ty (snap-grid ty)
+            x-options (->> (concat [sx tx min-x max-x]
+                                    (map first normalized-base)
+                                    (mapcat (fn [{:keys [x width]}] [x (+ x width)])
+                                            (:all-rects edge)))
+                           (filter number?)
+                           unique-sorted
+                           (take 10))
+            y-options (->> (concat [sy ty min-y max-y]
+                                    (map second normalized-base)
+                                    (mapcat (fn [{:keys [y height]}] [y (+ y height)])
+                                            (:all-rects edge)))
+                           (filter number?)
+                           unique-sorted
+                           (take 10))
+            direct [[sx sy] [tx ty]]
+            hv [[sx sy] [tx sy] [tx ty]]
+            vh [[sx sy] [sx ty] [tx ty]]
+            via-x (for [x x-options] [[sx sy] [x sy] [x ty] [tx ty]])
+            via-y (for [y y-options] [[sx sy] [sx y] [tx y] [tx ty]])]
+        (->> (concat [direct hv vh] via-x via-y)
+             (map (fn [candidate]
+                    (-> candidate
+                        vec
+                        orthogonalize-path
+                        remove-retraces
+                        compact-points)))
+             (filter #(>= (count %) 2))
+             distinct
+             vec)))))
+
 (defn- non-zero-segments
   [path-points]
   (->> (path-segments path-points)
@@ -716,30 +1072,181 @@
   (if (< (count path-points) 2)
     (vec path-points)
     (let [with-source (if from-rect
-                        (let [[nx ny] (second path-points)
-                              source-anchor (:point (rect-edge-anchor from-rect nx ny))]
-                          (assoc (vec path-points) 0 source-anchor))
+                        (let [current-source (first path-points)]
+                          (if (point-on-rect-edge? from-rect (first current-source) (second current-source))
+                            (vec path-points)
+                            (let [[nx ny] (second path-points)
+                                  source-anchor (:point (rect-edge-anchor from-rect nx ny))]
+                              (assoc (vec path-points) 0 source-anchor))))
                         (vec path-points))
           with-target (if to-rect
                         (let [count-points (count with-source)
-                              [px py] (nth with-source (- count-points 2))
-                              target-anchor (:point (rect-edge-anchor to-rect px py))]
-                          (assoc with-source (dec count-points) target-anchor))
+                              current-target (nth with-source (dec count-points))]
+                          (if (point-on-rect-edge? to-rect (first current-target) (second current-target))
+                            with-source
+                            (let [[px py] (nth with-source (- count-points 2))
+                                  target-anchor (:point (rect-edge-anchor to-rect px py))]
+                              (assoc with-source (dec count-points) target-anchor))))
                         with-source)]
       (-> with-target
           (enforce-source-perpendicular from-side)
           (enforce-target-perpendicular to-side)
+          ((fn [pts]
+             (mapv (fn [[x y]] [(snap-grid x) (snap-grid y)]) pts)))
           orthogonalize-path
+          remove-retraces
           compact-points))))
 
 (defn- place-non-overlapping-path
   [path-points edge placed-segments]
-  (first (keep (fn [candidate]
-                 (let [normalized (normalize-route-endpoints candidate edge)]
-                   (when (and (path-clear-of-rectangles? normalized edge)
-                              (not (path-overlaps-existing? normalized placed-segments)))
-                     normalized)))
-               (sidestep-candidates path-points))))
+  (let [normalized-base (normalize-route-endpoints path-points edge)
+        template-first (->> (template-candidates path-points edge)
+                            (map #(cap-segment-count % edge placed-segments))
+                            vec)
+        strict-template (->> template-first
+                             (filter #(and (path-clear-of-rectangles? % edge)
+                                           (not (path-overlaps-existing? % placed-segments))))
+                             vec)
+        candidates (->> (concat template-first
+                                [normalized-base])
+                        (map #(normalize-route-endpoints % edge))
+                        (map #(cap-segment-count % edge placed-segments))
+                        (filter #(>= (count %) 2))
+                        distinct
+                        vec)
+        strict (->> candidates
+                    (filter #(and (path-clear-of-rectangles? % edge)
+                                  (not (path-overlaps-existing? % placed-segments))))
+                    vec)]
+    (cond
+      (seq strict)
+      (apply min-key #(path-score % edge placed-segments) strict)
+      (seq candidates)
+      (apply min-key #(path-score % edge placed-segments) candidates)
+      :else
+      normalized-base)))
+
+(defn- edge-segment-vec
+  [edge]
+  (vec (path-segments (or (:route-points edge) []))))
+
+(defn- edge-rect-violation-count
+  [edge]
+  (let [segments (edge-segment-vec edge)
+        last-idx (dec (count segments))]
+    (count
+     (for [idx (range (count segments))
+           rect (:all-rects edge)
+           :when (segment-invalid-for-rect? idx last-idx (nth segments idx) rect edge)]
+       true))))
+
+(defn- edge-overlap?
+  [edge-a edge-b]
+  (let [sa (edge-segment-vec edge-a)
+        sb (edge-segment-vec edge-b)]
+    (some (fn [seg-a]
+            (some #(collinear-overlap? seg-a %) sb))
+          sa)))
+
+(defn- edge-route-bbox
+  [edge]
+  (let [segments (edge-segment-vec edge)
+        xs (mapcat (fn [[[x1 _] [x2 _]]] [x1 x2]) segments)
+        ys (mapcat (fn [[[_ y1] [_ y2]]] [y1 y2]) segments)]
+    (when (and (seq xs) (seq ys))
+      {:min-x (apply min xs)
+       :max-x (apply max xs)
+       :min-y (apply min ys)
+       :max-y (apply max ys)})))
+
+(defn- bbox-overlap?
+  [a b]
+  (and (<= (max (:min-x a) (:min-x b))
+           (min (:max-x a) (:max-x b)))
+       (<= (max (:min-y a) (:min-y b))
+           (min (:max-y a) (:max-y b)))))
+
+(defn- routing-conflicts
+  [edges]
+  (let [size (count edges)
+        rect-counts (->> edges
+                         (pmap edge-rect-violation-count)
+                         doall
+                         vec)
+        bboxes (mapv edge-route-bbox edges)
+        base (zipmap (range size) rect-counts)
+        pairs (vec (for [i (range size)
+                         j (range (inc i) size)]
+                     [i j]))
+        pair-overlaps (->> pairs
+                           (pmap (fn [[i j]]
+                                   (let [bi (nth bboxes i)
+                                         bj (nth bboxes j)]
+                                     (when (and bi bj
+                                                (bbox-overlap? bi bj)
+                                                (edge-overlap? (nth edges i) (nth edges j)))
+                                       [i j]))))
+                           doall
+                           (remove nil?)
+                           vec)
+        by-index (reduce (fn [acc [i j]]
+                           (-> acc
+                               (update i (fnil inc 0))
+                               (update j (fnil inc 0))))
+                         base
+                         pair-overlaps)
+        total (+ (reduce + 0 rect-counts)
+                 (count pair-overlaps))]
+    {:total total
+     :by-index by-index}))
+
+(defn- reroute-edge-against
+  [edge placed-segments]
+  (let [base (vec (or (:route-points edge) []))
+        next-path (place-non-overlapping-path base edge placed-segments)]
+    (assoc edge :route-points (or next-path base))))
+
+(defn- reroute-conflicted
+  [edges conflicted-order]
+  (let [conflicted (set conflicted-order)
+        fixed-segments (->> (map-indexed vector edges)
+                            (remove (fn [[idx _]] (contains? conflicted idx)))
+                            (mapcat (fn [[_ edge]] (edge-segment-vec edge)))
+                            vec)]
+    (loop [remaining conflicted-order
+           rerouted {}
+           placed fixed-segments]
+      (if (empty? remaining)
+        (mapv (fn [idx]
+                (get rerouted idx (nth edges idx)))
+              (range (count edges)))
+        (let [idx (first remaining)
+              edge' (reroute-edge-against (nth edges idx) placed)
+              segments' (edge-segment-vec edge')]
+          (recur (rest remaining)
+                 (assoc rerouted idx edge')
+                 (into placed segments')))))))
+
+(defn- global-optimize-routes
+  [routed]
+  (case route-quality-mode
+    :fast routed
+    :balanced
+    (let [{:keys [by-index]} (routing-conflicts routed)
+          conflicted-order (->> by-index
+                                (filter (fn [[_ c]] (pos? c)))
+                                (sort-by (fn [[idx c]] [(- c) idx]))
+                                (map first)
+                                (take balanced-reroute-limit)
+                                vec)]
+      (if (empty? conflicted-order)
+        routed
+        (let [candidate-a (reroute-conflicted routed conflicted-order)
+              score-a (:total (routing-conflicts candidate-a))
+              candidate-b (reroute-conflicted routed (vec (reverse conflicted-order)))
+              score-b (:total (routing-conflicts candidate-b))]
+          (if (<= score-a score-b) candidate-a candidate-b))))
+    routed))
 
 (defn- edge-path-points
   [points bounds edge]
@@ -973,15 +1480,34 @@
                                       (assoc edge
                                              :from-rect (get layer-rect-by-index from-layer)
                                              :to-rect (get layer-rect-by-index to-layer)
-                                             :all-rects (:layer-rects scene))))))]
+                                             :all-rects (:layer-rects scene)
+                                             :route-bounds route-bounds)))))]
     (let [spaced (apply-parallel-arrow-spacing edge-drawables points)]
-      (route-engine/route-edges
-        {:spaced-edges spaced
-         :resolve-edge-path (fn [edge]
-                              (resolved-edge-path points route-bounds edge))
-         :normalize-route-endpoints normalize-route-endpoints
-         :place-non-overlapping-path place-non-overlapping-path
-         :path-segments path-segments}))))
+      (let [routed (route-engine/route-edges
+                     {:spaced-edges spaced
+                      :resolve-edge-path (fn [edge]
+                                           (resolved-edge-path points route-bounds edge))
+                      :normalize-route-endpoints normalize-route-endpoints
+                      :place-non-overlapping-path place-non-overlapping-path
+                      :path-segments path-segments})]
+        (if (> (count routed) 1)
+          (global-optimize-routes routed)
+          routed)))))
+
+(defn- filter-routed-edges
+  [routed declutter-mode]
+  (case declutter-mode
+    :concrete (->> routed (filter #(= :direct (:type %))) vec)
+    :abstract (->> routed (filter #(= :abstract (:type %))) vec)
+    routed))
+
+(defn- precompute-routed-edges
+  [scene]
+  (prepare-edge-drawables scene :all))
+
+(defn- unrouted-edges
+  [scene]
+  (vec (or (:edge-drawables scene) [])))
 
 (defn- draw-toolbar
   [{:keys [namespace-path declutter-mode nav-stack]}]
@@ -1079,19 +1605,24 @@
 
 (defn- draw-scene
   [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}]
-  (canvas/draw-scene state
-                     {:scaled-content-height scaled-content-height
-                      :point-in-toolbar? point-in-toolbar?
-                      :module-point-map module-point-map
-                      :prepare-edge-drawables prepare-edge-drawables
-                      :hovered-edge hovered-edge
-                      :hovered-module-position hovered-module-position
-                      :hovered-layer-label hovered-layer-label
-                      :edge-hover-label edge-hover-label
-                      :draw-scene-content draw-scene-content
-                      :draw-toolbar draw-toolbar
-                      :draw-tooltip draw-tooltip
-                      :draw-scrollbar draw-scrollbar}))
+  (let [routed (or (:routed-edges state)
+                   (if (:skip-routing? state)
+                     (unrouted-edges scene)
+                     (precompute-routed-edges scene)))]
+    (canvas/draw-scene state
+                       {:scaled-content-height scaled-content-height
+                        :point-in-toolbar? point-in-toolbar?
+                        :module-point-map module-point-map
+                        :prepare-edge-drawables (fn [_ mode]
+                                                  (filter-routed-edges routed mode))
+                        :hovered-edge hovered-edge
+                        :hovered-module-position hovered-module-position
+                        :hovered-layer-label hovered-layer-label
+                        :edge-hover-label edge-hover-label
+                        :draw-scene-content draw-scene-content
+                        :draw-toolbar draw-toolbar
+                        :draw-tooltip draw-tooltip
+                        :draw-scrollbar draw-scrollbar})))
 
 (defn- plus-key?
   [k]
@@ -1255,12 +1786,16 @@
   [state path scroll-x scroll-y]
   (let [view (view-architecture (:architecture state) path)
         scene (-> (build-scene view)
-                  (attach-drillable-markers (:architecture state) path))]
+                  (attach-drillable-markers (:architecture state) path))
+        routed-edges (if (:skip-routing? state)
+                       (unrouted-edges scene)
+                       (precompute-routed-edges scene))]
     (assoc state
            :namespace-path path
            :scroll-x (double (or scroll-x 0.0))
            :scroll-y (double (or scroll-y 0.0))
-           :scene scene)))
+           :scene scene
+           :routed-edges routed-edges)))
 
 (defn initial-scene-for-show
   [scene architecture]
@@ -1280,10 +1815,14 @@
 (defn show!
   ([scene]
    (show! scene {}))
-  ([scene {:keys [title architecture]
-           :or {title "architecture-viewer"}}]
+  ([scene {:keys [title architecture skip-routing?]
+           :or {title "architecture-viewer"
+                skip-routing? false}}]
    (let [effective-architecture (or architecture {:scene scene})
          initial-scene (initial-scene-for-show scene architecture)
+         initial-routed-edges (if skip-routing?
+                               (unrouted-edges initial-scene)
+                               (precompute-routed-edges initial-scene))
          content-height (if (seq (:layer-rects initial-scene))
                           (->> (:layer-rects initial-scene)
                                (map (fn [{:keys [y height]}] (+ y height)))
@@ -1308,6 +1847,8 @@
                  :scroll-y 0.0
                  :dragging-scrollbar? false
                  :drag-offset nil
+                 :skip-routing? skip-routing?
+                 :routed-edges initial-routed-edges
                  :viewport-height viewport-height
                  :viewport-width width})
        :draw draw-scene

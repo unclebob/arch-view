@@ -18,10 +18,10 @@
                  (get-in architecture [:graph :nodes]))
         (should= #{{:from "my.app.a" :to "my.app.b"}}
                  (get-in architecture [:graph :edges]))
-        (should= [{:index 0 :modules ["my.app.b"]}
-                  {:index 1 :modules ["my.app.a"]}]
+        (should= [{:index 0 :modules ["my.app.a"]}
+                  {:index 1 :modules ["my.app.b"]}]
                  (get-in architecture [:layout :layers]))
-        (should= {"my.app.a" 1 "my.app.b" 0}
+        (should= {"my.app.a" 0 "my.app.b" 1}
                  (get-in architecture [:layout :module->layer]))
         (should= #{{:from "my.app.a" :to "my.app.b" :type :direct}}
                  (:classified-edges architecture))
@@ -32,16 +32,20 @@
         (should= 1 (count (get-in architecture [:scene :edge-drawables]))))))
 
   (it "parses cli options with no-gui flag"
-    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :out nil}
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :skip-routing false :out nil}
              (sut/parse-args ["--project-path" "/tmp/demo" "--no-gui"])))
 
   (it "parses output file option"
-    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :out "/tmp/scene.edn"}
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :skip-routing false :out "/tmp/scene.edn"}
              (sut/parse-args ["--project-path" "/tmp/demo" "--no-gui" "--out" "/tmp/scene.edn"])))
 
   (it "parses in-edn option"
-    (should= {:project-path "." :in-edn "/tmp/demo.edn" :no-gui true :out nil}
+    (should= {:project-path "." :in-edn "/tmp/demo.edn" :no-gui true :skip-routing false :out nil}
              (sut/parse-args ["--in-edn" "/tmp/demo.edn" "--no-gui"])))
+
+  (it "parses skip-routing option"
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui false :skip-routing true :out nil}
+             (sut/parse-args ["--project-path" "/tmp/demo" "--skip-routing"])))
 
   (it "does not invoke quil rendering when --no-gui is present"
     (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-cli" (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -150,3 +154,21 @@
                     sut/exit-program! (fn [] nil)]
         (sut/-main "--in-edn" (.getAbsolutePath in-file)))
       (should= true (boolean (and @title* (.contains ^String @title* "input.edn")))))))
+
+(describe "core skip routing option"
+  (it "passes skip-routing option through to viewer"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-skip-routing" (make-array java.nio.file.attribute.FileAttribute 0)))
+          src-dir (doto (java.io.File. root "src") .mkdirs)
+          a-file (java.io.File. src-dir "my/app/a.clj")
+          b-file (java.io.File. src-dir "my/app/b.clj")
+          skip-routing?* (atom nil)]
+      (.mkdirs (.getParentFile a-file))
+      (spit a-file "(ns my.app.a (:require [my.app.b :as b]))")
+      (spit b-file "(ns my.app.b)")
+      (with-redefs [render/show! (fn [_ opts]
+                                   (reset! skip-routing?* (:skip-routing? opts))
+                                   :fake-sketch)
+                    render/wait-until-closed! (fn [_] nil)
+                    sut/exit-program! (fn [] nil)]
+        (sut/-main "--project-path" (.getAbsolutePath root) "--skip-routing"))
+      (should= true @skip-routing?*))))
