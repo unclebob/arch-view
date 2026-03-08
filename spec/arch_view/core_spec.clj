@@ -32,20 +32,30 @@
         (should= 1 (count (get-in architecture [:scene :edge-drawables]))))))
 
   (it "parses cli options with no-gui flag"
-    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :skip-routing false :out nil}
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :out nil :help false}
              (sut/parse-args ["--project-path" "/tmp/demo" "--no-gui"])))
 
   (it "parses output file option"
-    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :skip-routing false :out "/tmp/scene.edn"}
+    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui true :out "/tmp/scene.edn" :help false}
              (sut/parse-args ["--project-path" "/tmp/demo" "--no-gui" "--out" "/tmp/scene.edn"])))
 
   (it "parses in-edn option"
-    (should= {:project-path "." :in-edn "/tmp/demo.edn" :no-gui true :skip-routing false :out nil}
+    (should= {:project-path "." :in-edn "/tmp/demo.edn" :no-gui true :out nil :help false}
              (sut/parse-args ["--in-edn" "/tmp/demo.edn" "--no-gui"])))
 
-  (it "parses skip-routing option"
-    (should= {:project-path "/tmp/demo" :in-edn nil :no-gui false :skip-routing true :out nil}
-             (sut/parse-args ["--project-path" "/tmp/demo" "--skip-routing"])))
+  (it "parses help option"
+    (should= {:project-path "." :in-edn nil :no-gui false :out nil :help true}
+             (sut/parse-args ["--help"])))
+
+  (it "prints usage summary and skips loading when --help is present"
+    (let [printed (atom "")
+          loaded? (atom false)]
+      (with-redefs [sut/load-architecture (fn [_] (reset! loaded? true) {})
+                    sut/load-architecture-edn (fn [_] (reset! loaded? true) {})
+                    println (fn [& xs] (swap! printed str (apply str xs) "\n"))]
+        (sut/-main "--help"))
+      (should= false @loaded?)
+      (should= true (.contains ^String @printed "Usage: clj -M:run [options]"))))
 
   (it "does not invoke quil rendering when --no-gui is present"
     (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-cli" (make-array java.nio.file.attribute.FileAttribute 0)))
@@ -154,21 +164,3 @@
                     sut/exit-program! (fn [] nil)]
         (sut/-main "--in-edn" (.getAbsolutePath in-file)))
       (should= true (boolean (and @title* (.contains ^String @title* "input.edn")))))))
-
-(describe "core skip routing option"
-  (it "passes skip-routing option through to viewer"
-    (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-skip-routing" (make-array java.nio.file.attribute.FileAttribute 0)))
-          src-dir (doto (java.io.File. root "src") .mkdirs)
-          a-file (java.io.File. src-dir "my/app/a.clj")
-          b-file (java.io.File. src-dir "my/app/b.clj")
-          skip-routing?* (atom nil)]
-      (.mkdirs (.getParentFile a-file))
-      (spit a-file "(ns my.app.a (:require [my.app.b :as b]))")
-      (spit b-file "(ns my.app.b)")
-      (with-redefs [render/show! (fn [_ opts]
-                                   (reset! skip-routing?* (:skip-routing? opts))
-                                   :fake-sketch)
-                    render/wait-until-closed! (fn [_] nil)
-                    sut/exit-program! (fn [] nil)]
-        (sut/-main "--project-path" (.getAbsolutePath root) "--skip-routing"))
-      (should= true @skip-routing?*))))

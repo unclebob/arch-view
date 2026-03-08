@@ -11,6 +11,18 @@
   {:source-paths ["src"]
    :component-rules []})
 
+(defn usage-summary
+  []
+  (str
+   "Usage: clj -M:run [options]\n"
+   "\n"
+   "Options:\n"
+   "  --help                     Print this usage summary and exit.\n"
+   "  --project-path <path>      Project root to scan (default: current directory).\n"
+   "  --in-edn <file>            Load architecture from an EDN file instead of scanning source.\n"
+   "  --out <file>               Write architecture EDN output to file.\n"
+   "  --no-gui                   Run headless (do not open the interactive viewer).\n"))
+
 (defn load-architecture
   [project-path]
   (let [guidance default-guidance
@@ -40,11 +52,13 @@
 (defn parse-args
   [args]
   (loop [remaining args
-         opts {:project-path "." :in-edn nil :no-gui false :skip-routing false :out nil}]
+         opts {:project-path "." :in-edn nil :no-gui false :out nil :help false}]
     (if (empty? remaining)
       opts
       (let [arg (first remaining)]
         (cond
+          (= "--help" arg) (recur (next remaining)
+                                  (assoc opts :help true))
           (= "--project-path" arg) (recur (nnext remaining)
                                           (assoc opts :project-path (second remaining)))
           (= "--in-edn" arg) (recur (nnext remaining)
@@ -53,8 +67,6 @@
                                  (assoc opts :out (second remaining)))
           (= "--no-gui" arg) (recur (next remaining)
                                     (assoc opts :no-gui true))
-          (= "--skip-routing" arg) (recur (next remaining)
-                                          (assoc opts :skip-routing true))
           :else (recur (next remaining) opts))))))
 
 (defn exit-program!
@@ -63,20 +75,21 @@
   (System/exit 0))
 
 (defn -main [& args]
-  (let [{:keys [project-path in-edn no-gui skip-routing out]} (parse-args args)
-        architecture (if in-edn
-                       (load-architecture-edn in-edn)
-                       (load-architecture project-path))
-        source-label (or in-edn project-path)
-        {:keys [graph scene]} architecture]
-    (println "Architecture loaded")
-    (println "Nodes:" (count (:nodes graph)))
-    (println "Edges:" (count (:edges graph)))
-    (when out
-      (spit out (pr-str architecture)))
-    (when-not no-gui
-      (-> (render/show! scene {:title (str "architecture-viewer: " (str/trim source-label))
-                               :architecture architecture
-                               :skip-routing? skip-routing})
-          (render/wait-until-closed!))
-      (exit-program!))))
+  (let [{:keys [project-path in-edn no-gui out help]} (parse-args args)]
+    (if help
+      (println (usage-summary))
+      (let [architecture (if in-edn
+                           (load-architecture-edn in-edn)
+                           (load-architecture project-path))
+            source-label (or in-edn project-path)
+            {:keys [graph scene]} architecture]
+        (println "Architecture loaded")
+        (println "Nodes:" (count (:nodes graph)))
+        (println "Edges:" (count (:edges graph)))
+        (when out
+          (spit out (pr-str architecture)))
+        (when-not no-gui
+          (-> (render/show! scene {:title (str "architecture-viewer: " (str/trim source-label))
+                                   :architecture architecture})
+              (render/wait-until-closed!))
+          (exit-program!))))))

@@ -2278,9 +2278,8 @@
 (defn show!
   ([scene]
    (show! scene {}))
-  ([scene {:keys [title architecture skip-routing?]
-           :or {title "architecture-viewer"
-                skip-routing? false}}]
+  ([scene {:keys [title architecture]
+           :or {title "architecture-viewer"}}]
    (let [effective-architecture (or architecture {:scene scene})
          initial-scene (initial-scene-for-show scene architecture)
          content-height (if (seq (:layer-rects initial-scene))
@@ -2307,7 +2306,6 @@
                  :scroll-y 0.0
                  :dragging-scrollbar? false
                  :drag-offset nil
-                 :skip-routing? skip-routing?
                  :routed-edges nil
                  :viewport-height viewport-height
                  :viewport-width width})
