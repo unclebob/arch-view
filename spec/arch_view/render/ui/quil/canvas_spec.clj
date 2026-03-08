@@ -3,11 +3,12 @@
             [speclj.core :refer :all]))
 
 (describe "quil canvas"
-  (it "draw-scene-content renders edges via dependency callback"
-    (let [edge-calls (atom [])]
+  (it "draw-scene-content renders dependency indicators via callback"
+    (let [indicator-calls (atom nil)]
       (with-redefs [quil.core/background (fn [& _])
                     quil.core/fill (fn [& _])
                     quil.core/stroke (fn [& _])
+                    quil.core/stroke-weight (fn [& _])
                     quil.core/rect (fn [& _])
                     quil.core/text-align (fn [& _])
                     quil.core/text (fn [& _])
@@ -19,12 +20,11 @@
          100
          [{:id 1} {:id 2}]
          {:rendered-label (fn [m] (:label m))
-          :module-point-map (fn [_] {:p :p})
-          :content-height-for-scene (fn [_] 200)
-          :draw-edge (fn [_ _ e] (swap! edge-calls conj (:id e)))})
-        (should= [1 2] @edge-calls))))
+          :draw-dependency-indicators (fn [indicators]
+                                        (reset! indicator-calls (mapv :id indicators)))}))
+      (should= [1 2] @indicator-calls)))
 
-  (it "draw-toolbar writes back and declutter labels"
+  (it "draw-toolbar writes back label"
     (let [labels (atom [])]
       (with-redefs [quil.core/no-stroke (fn [& _])
                     quil.core/fill (fn [& _])
@@ -32,13 +32,11 @@
                     quil.core/text-align (fn [& _])
                     quil.core/text (fn [label _ _] (swap! labels conj label))]
         (sut/draw-toolbar
-         {:namespace-path ["a"] :declutter-mode :all :nav-stack []}
+         {:namespace-path ["a"] :nav-stack []}
          {:back-button-rect (fn [] {:x 0.0 :y 0.0 :width 10.0 :height 10.0})
-          :declutter-button-rect (fn [] {:x 20.0 :y 0.0 :width 10.0 :height 10.0})
           :back-button-label (fn [_] "Back")
-          :declutter-label (fn [_] "View: All")
           :toolbar-height 38.0})
-      (should= ["Back" "View: All"] @labels))))
+      (should= ["Back"] @labels))))
 
   (it "draw-scene draws hovered tooltip text"
     (let [tooltips (atom [])]
@@ -60,14 +58,14 @@
           :zoom 1.0}
          {:scaled-content-height (fn [_ _] 1000.0)
           :point-in-toolbar? (fn [_ _] false)
-          :module-point-map (fn [_] {})
-          :prepare-edge-drawables (fn [& _] [{:from "a" :to "b" :count 2}])
-          :hovered-edge (fn [& _] {:from "a" :to "b" :count 2})
+          :dependency-indicators (fn [& _] [{:tooltip-lines ["a->b(2)"]}])
+          :hovered-dependency (fn [& _] {:tooltip-lines ["a->b(2)"]})
           :hovered-module-position (fn [& _] nil)
           :hovered-layer-label (fn [& _] nil)
-          :edge-hover-label (fn [_] "a->b(2)")
           :draw-scene-content (fn [& _])
           :draw-toolbar (fn [& _])
           :draw-tooltip (fn [text _ _] (swap! tooltips conj text))
+          :draw-tooltip-lines (fn [lines _ _]
+                                (swap! tooltips into lines))
           :draw-scrollbar (fn [& _])})
         (should= ["a->b(2)"] @tooltips)))))

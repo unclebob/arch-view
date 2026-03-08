@@ -11,6 +11,8 @@
 (def strip-top-namespace labels/strip-top-namespace)
 (def label-width labels/label-width)
 (def rendered-label labels/rendered-label)
+(def rendered-label-lines labels/rendered-label-lines)
+(def split-label-lines labels/split-label-lines)
 (def declutter-modes labels/declutter-modes)
 (def next-declutter-mode labels/next-declutter-mode)
 (def declutter-label labels/declutter-label)

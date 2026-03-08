@@ -1,9 +1,23 @@
 (ns arch-view.render.ui.util.labels
   (:require [clojure.string :as str]))
 
+(defn- strip-mixed-leaf-suffix
+  [module]
+  (if (and (string? module) (str/ends-with? module "|file"))
+    (subs module 0 (- (count module) 5))
+    module))
+
+(defn- strip-source-extension
+  [module]
+  (if (string? module)
+    (str/replace module #"\.(?:clj|cljc|cljs)$" "")
+    module))
+
 (defn abbreviate-module-name
   [module]
-  (let [parts (->> (str/split module #"\.")
+  (let [sanitized (strip-mixed-leaf-suffix module)
+        no-ext (strip-source-extension sanitized)
+        parts (->> (str/split no-ext #"\.")
                    (drop 1)
                    vec)
         parent (butlast parts)
@@ -12,7 +26,7 @@
       (str (str/join "." (map #(subs % 0 1) parent))
            "."
            last-part)
-      (or last-part module))))
+      (or last-part no-ext))))
 
 (defn strip-top-namespace
   [module]
@@ -23,11 +37,53 @@
 
 (defn label-width
   [label]
-  (* 7.0 (count (or label ""))))
+  (let [lines (str/split (or label "") #"\n" -1)
+        widest (apply max 0 (map count lines))]
+    (* 7.0 widest)))
 
 (defn rendered-label
   [{:keys [display-label label]}]
   (or display-label label))
+
+(defn split-label-lines
+  [label max-chars]
+  (let [label (or label "")
+        max-chars (long (or max-chars 0))
+        n (count label)]
+    (if (or (<= max-chars 0)
+            (<= n max-chars))
+      [label]
+      (let [target (long (/ n 2))
+            candidates (->> (range 1 (dec n))
+                            (filter (fn [idx]
+                                      (contains? #{\. \- \_ \space} (.charAt label idx)))))
+            choose (fn [idx]
+                     (let [ch (.charAt label idx)
+                           cut (if (contains? #{\- \_} ch) (inc idx) idx)
+                           left (subs label 0 cut)
+                           right (subs label cut n)
+                           right (str/replace right #"^[\./]+" "")]
+                       {:left left
+                        :right right
+                        :score (Math/abs (- idx target))
+                        :ok? (and (<= (count left) max-chars)
+                                  (<= (count right) max-chars)
+                                  (not (str/blank? left))
+                                  (not (str/blank? right)))}))
+            convenient (->> candidates
+                            (map choose)
+                            (filter :ok?)
+                            (sort-by :score)
+                            first)
+            fallback-cut (max 1 (min (dec n) max-chars))
+            fallback {:left (subs label 0 fallback-cut)
+                      :right (subs label fallback-cut n)}
+            {:keys [left right]} (or convenient fallback)]
+        [(str/trim left) (str/trim right)]))))
+
+(defn rendered-label-lines
+  [{:keys [display-label label max-label-chars]}]
+  (split-label-lines (or display-label label) max-label-chars))
 
 (def declutter-modes [:all :abstract :concrete])
 

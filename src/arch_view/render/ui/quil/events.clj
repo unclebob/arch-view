@@ -153,11 +153,10 @@
   (logic/point-in-toolbar? mx my toolbar-height))
 
 (defn toolbar-click-target
-  [state mx my {:keys [point-in-rect? back-button-rect declutter-button-rect toolbar-height]}]
+  [state mx my {:keys [point-in-rect? back-button-rect toolbar-height]}]
   (cond
     (and (seq (:namespace-path state))
          (point-in-rect? (back-button-rect) mx my)) :back
-    (point-in-rect? (declutter-button-rect) mx my) :declutter
     :else nil))
 
 (defn navigate-up
@@ -171,13 +170,12 @@
       state)))
 
 (defn apply-toolbar-click
-  [state event {:keys [next-declutter-mode toolbar-height] :as deps}]
+  [state event {:keys [toolbar-height] :as deps}]
   (let [[mx my] (mouse-pos event)]
     (if-not (point-in-toolbar? mx my toolbar-height)
       nil
       (case (toolbar-click-target state mx my deps)
         :back (navigate-up state deps)
-        :declutter (update state :declutter-mode next-declutter-mode)
         state))))
 
 (defn apply-drilldown-click

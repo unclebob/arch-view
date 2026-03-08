@@ -14,6 +14,11 @@
   (when path
     (.getName (io/file path))))
 
+(defn- source-filename-base
+  [path]
+  (some-> (source-filename path)
+          (str/replace #"\.[^.]+$" "")))
+
 (defn mixed-leaf-node-id
   [child]
   (str child mixed-leaf-suffix))
@@ -170,6 +175,13 @@
                :abstract
                :concrete)])))
 
+(defn- node-cycle-map
+  [nodes node->modules-map cycle-modules]
+  (into {}
+        (for [n nodes]
+          [n (boolean (some #(contains? cycle-modules %)
+                            (get node->modules-map n)))])))
+
 (defn- node-leaf-map
   [nodes node->modules-map namespace-path]
   (into {}
@@ -201,7 +213,8 @@
               :let [leaf? (true? (get node-leaf-map n))
                     source-file (get node-source-file-map n)]]
           [n (if leaf?
-               (or (source-filename source-file) n)
+               (or (source-filename-base source-file)
+                   (node-child-name n))
                (node-child-name n))])))
 
 (defn- node-full-name-map
@@ -234,10 +247,28 @@
           {}
           classified))
 
+(defn- display-edges-by-pair
+  [classified scoped module->node-map]
+  (reduce (fn [acc {:keys [from to type]}]
+            (let [from-in? (contains? scoped from)
+                  to-in? (contains? scoped to)]
+              (if (or from-in? to-in?)
+                (let [f (if from-in? (get module->node-map from) from)
+                      t (if to-in? (get module->node-map to) to)]
+                  (if (or (nil? f) (nil? t) (= f t))
+                    acc
+                    (update acc [f t] #(aggregate-edge % type))))
+                acc)))
+          {}
+          classified))
+
 (defn view-architecture
   [architecture namespace-path]
   (let [all-modules (or (get-in architecture [:graph :nodes]) #{})
         module->source-file-all (or (get-in architecture [:graph :module->source-file]) {})
+        cycle-modules (->> (or (get-in architecture [:layout :feedback-edges]) #{})
+                           (mapcat (juxt :from :to))
+                           set)
         scoped (scoped-modules all-modules namespace-path)
         module->child-map (module->child scoped namespace-path)
         by-child (modules-by-child scoped module->child-map)
@@ -247,13 +278,17 @@
         nodes (set (keys node->modules-map))
         abstract-source (or (get-in architecture [:graph :abstract-modules]) #{})
         module->kind (node-kind-map nodes node->modules-map abstract-source)
+        module->cycle? (node-cycle-map nodes node->modules-map cycle-modules)
         module->leaf? (node-leaf-map nodes node->modules-map namespace-path)
         module->source-file (node-source-file-map nodes node->modules-map module->source-file-all namespace-path)
         module->display-label (node-display-label-map nodes module->leaf? module->source-file)
         module->full-name (node-full-name-map nodes module->leaf? module->source-file namespace-path)
         pairs (edges-by-pair (:classified-edges architecture) module->node-map)
+        display-pairs (display-edges-by-pair (:classified-edges architecture) scoped module->node-map)
         classified-edges (set (for [[[f t] {:keys [type count]}] pairs]
                                 {:from f :to t :type type :count count}))
+        display-edges (set (for [[[f t] {:keys [type count]}] display-pairs]
+                             {:from f :to t :type type :count count}))
         graph {:nodes nodes
                :edges (set (for [{:keys [from to]} classified-edges] {:from from :to to}))
                :abstract-modules (set (for [[n k] module->kind :when (= k :abstract)] n))}
@@ -266,7 +301,9 @@
      :layout layout
      :layer->label layer->label
      :classified-edges classified-edges
+     :display-edges display-edges
      :module->kind module->kind
+     :module->cycle? module->cycle?
      :module->leaf? module->leaf?
      :module->source-file module->source-file
      :module->display-label module->display-label

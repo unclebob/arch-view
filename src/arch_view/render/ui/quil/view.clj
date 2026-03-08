@@ -39,6 +39,12 @@
   [{:keys [display-label label]}]
   (functional/rendered-label {:display-label display-label :label label}))
 
+(defn- rendered-label-lines
+  [{:keys [display-label label max-label-chars]}]
+  (functional/rendered-label-lines {:display-label display-label
+                                    :label label
+                                    :max-label-chars max-label-chars}))
+
 (def ^:private toolbar-height 38.0)
 (def ^:private back-button-width 360.0)
 (def ^:private declutter-button-width 240.0)
@@ -58,12 +64,7 @@
   [{:keys [namespace-path nav-stack]}]
   (if-not (seq namespace-path)
     "Back"
-    (let [target-path (or (:path (peek (vec (or nav-stack []))))
-                          (vec (drop-last (vec (or namespace-path [])))))
-          target-label (if (seq target-path)
-                         (str/join "." target-path)
-                         "root")]
-      (str "Back: " target-label))))
+    (str "Back: " (last (vec namespace-path)))))
 
 (defn- back-button-rect
   []
@@ -1302,11 +1303,13 @@
 
 (defn- label-hitbox
   [{:keys [x y] :as module-position}]
-  (let [width (label-width (rendered-label module-position))
+  (let [lines (rendered-label-lines module-position)
+        width (apply max 0.0 (map label-width lines))
+        line-count (max 1 (count lines))
         pad-x 8.0
         pad-y 6.0
         half-w (+ (/ width 2.0) pad-x)
-        half-h (+ 7.0 pad-y)]
+        half-h (+ (/ (* 14.0 line-count) 2.0) pad-y)]
     {:left (- x half-w)
      :right (+ x half-w)
      :top (- y half-h)
@@ -1376,9 +1379,7 @@
                             label (:label position)]
                         (assoc position
                                :drillable? drillable
-                               :display-label (if drillable
-                                                (str "+ " label)
-                                                label))))
+                               :display-label label)))
                     positions)))))
 
 (defn scroll-range
@@ -1446,17 +1447,468 @@
           normalized (/ (- thumb-y 12.0) max-thumb-travel)]
       (clamp-scroll (* normalized max-scroll) content-height viewport-height))))
 
+(declare rect-center-x
+         rect-bottom
+         draw-dependency-indicators)
+
 (defn- draw-scene-content
-  [scene viewport-width spaced-edges]
-  (canvas/draw-scene-content scene viewport-width spaced-edges
+  [scene viewport-width dependency-indicators]
+  (canvas/draw-scene-content scene viewport-width dependency-indicators
                              {:rendered-label rendered-label
-                              :module-point-map module-point-map
-                              :content-height-for-scene content-height-for-scene
-                              :draw-edge draw-edge}))
+                              :rendered-label-lines rendered-label-lines
+                              :draw-dependency-indicators draw-dependency-indicators}))
+
+(def ^:private dependency-triangle-side 12.0)
+(def ^:private dependency-triangle-height
+  (* dependency-triangle-side 0.8660254037844386))
+(def ^:private dependency-triangle-hover-tolerance 5.0)
+
+(defn- triangle-points
+  [rect direction]
+  (let [cx (rect-center-x rect)
+        half-side (/ dependency-triangle-side 2.0)
+        edge-y (if (= direction :incoming)
+                 (:y rect)
+                 (rect-bottom rect))]
+    [[(- cx half-side) edge-y]
+     [(+ cx half-side) edge-y]
+     [cx (+ edge-y dependency-triangle-height)]]))
+
+(defn- abbreviated-deps
+  [dependency-entries full-name-by-module]
+  (->> dependency-entries
+       (reduce (fn [acc {:keys [module cycle-break?]}]
+                 (update acc module (fn [existing]
+                                      {:module module
+                                       :cycle? (or cycle-break? (get existing :cycle? false))})))
+               {})
+       vals
+       (sort-by :module)
+       (mapv (fn [{:keys [module cycle?]}]
+               {:text (or (get full-name-by-module module)
+                          (strip-top-namespace (str module)))
+                :cycle? (boolean cycle?)}))))
+
+(defn dependency-indicators
+  [scene declutter-mode]
+  (let [edge-drawables (declutter-edge-drawables scene declutter-mode)
+        full-name-by-module (into {}
+                                  (keep (fn [{:keys [module full-name]}]
+                                          (when module [module full-name])))
+                                  (:module-positions scene))
+        incoming-by-module (reduce (fn [acc {:keys [from to cycle-break?]}]
+                                     (update acc to (fnil conj [])
+                                             {:module from :cycle-break? cycle-break?}))
+                                   {}
+                                   edge-drawables)
+        outgoing-by-module (reduce (fn [acc {:keys [from to cycle-break?]}]
+                                     (update acc from (fnil conj [])
+                                             {:module to :cycle-break? cycle-break?}))
+                                   {}
+                                   edge-drawables)]
+    (->> (:layer-rects scene)
+         (mapcat (fn [{:keys [module] :as rect}]
+                   (let [incoming (abbreviated-deps (get incoming-by-module module)
+                                                    full-name-by-module)
+                         outgoing (abbreviated-deps (get outgoing-by-module module)
+                                                    full-name-by-module)]
+                     (cond-> []
+                       (seq incoming)
+                       (conj {:module module
+                              :direction :incoming
+                              :triangle (triangle-points rect :incoming)
+                              :cycle? (boolean (some :cycle? incoming))
+                              :tooltip-lines incoming})
+
+                       (seq outgoing)
+                       (conj {:module module
+                              :direction :outgoing
+                              :triangle (triangle-points rect :outgoing)
+                              :cycle? (boolean (some :cycle? outgoing))
+                              :tooltip-lines outgoing})))))
+         (sort-by (juxt :module :direction))
+         vec)))
+
+(defn- draw-dependency-indicators
+  [indicators]
+  (q/no-stroke)
+  (doseq [{:keys [triangle cycle?]} indicators
+          :let [[[x1 y1] [x2 y2] [x3 y3]] triangle]]
+    (if cycle?
+      (q/fill 180 0 0)
+      (q/fill 0 0 0))
+    (q/triangle x1 y1 x2 y2 x3 y3)))
+
+(defn- rect-right
+  [{:keys [x width]}]
+  (+ x width))
+
+(defn- rect-bottom
+  [{:keys [y height]}]
+  (+ y height))
+
+(defn- rect-center-x
+  [rect]
+  (+ (:x rect) (/ (:width rect) 2.0)))
+
+(defn- rect-center-y
+  [rect]
+  (+ (:y rect) (/ (:height rect) 2.0)))
+
+(defn- rect-row
+  [rect]
+  (double (or (:row rect) 0.0)))
+
+(defn- adjacent-vertical-level?
+  [from-rect to-rect]
+  (= 1.0 (Math/abs (- (rect-row from-rect) (rect-row to-rect)))))
+
+(defn- desired-port-sides
+  [from-rect to-rect bounds]
+  (let [from-row (rect-row from-rect)
+        to-row (rect-row to-rect)
+        from-cx (rect-center-x from-rect)
+        to-cx (rect-center-x to-rect)
+        row-diff (Math/abs (- from-row to-row))
+        scene-center-x (/ (+ (:min-x bounds) (:max-x bounds)) 2.0)
+        near-center? (<= (Math/abs (- from-cx scene-center-x)) route-grid-step)
+        preferred-from-side (when-not near-center?
+                              (if (< from-cx scene-center-x) :left :right))]
+    (cond
+      preferred-from-side
+      [preferred-from-side
+       (cond
+         (< from-row to-row) :top
+         (> from-row to-row) :bottom
+         :else :auto)]
+
+      (> row-diff 1.0) (let [side (if (< from-cx to-cx) :right :left)]
+                         [side :auto])
+      (< from-row to-row) [:bottom :top]
+      (> from-row to-row) [:top :bottom]
+      (< from-cx to-cx) [:right :left]
+      :else [:left :right])))
+
+(defn- grid-values-between
+  [lo hi]
+  (let [start (snap-grid lo)
+        end (snap-grid hi)
+        step (long route-grid-step)]
+    (if (<= start end)
+      (vec (range (long start) (inc (long end)) step))
+      (vec (reverse (range (long end) (inc (long start)) step))))))
+
+(defn- rect-port-candidates
+  [rect side]
+  (let [left (:x rect)
+        right (rect-right rect)
+        top (:y rect)
+        bottom (rect-bottom rect)
+        xlo (+ left 10.0)
+        xhi (- right 10.0)
+        ylo (+ top 10.0)
+        yhi (- bottom 10.0)]
+    (case side
+      :top (let [xs (or (seq (grid-values-between xlo xhi))
+                        [(rect-center-x rect)])]
+             (mapv (fn [x] {:point [(double x) top]
+                            :key [(:index rect) :top (double x) (double top)]})
+                   xs))
+      :bottom (let [xs (or (seq (grid-values-between xlo xhi))
+                           [(rect-center-x rect)])]
+                (mapv (fn [x] {:point [(double x) bottom]
+                               :key [(:index rect) :bottom (double x) (double bottom)]})
+                      xs))
+      :left (let [ys (or (seq (grid-values-between ylo yhi))
+                         [(rect-center-y rect)])]
+              (mapv (fn [y] {:point [left (double y)]
+                             :key [(:index rect) :left (double left) (double y)]})
+                    ys))
+      :right (let [ys (or (seq (grid-values-between ylo yhi))
+                          [(rect-center-y rect)])]
+               (mapv (fn [y] {:point [right (double y)]
+                              :key [(:index rect) :right (double right) (double y)]})
+                     ys))
+      [])))
+
+(defn- choose-port
+  [rect side preferred used-ports]
+  (let [candidates (rect-port-candidates rect side)
+        axis-distance (fn [{[x y] :point}]
+                        (if (#{:top :bottom} side)
+                          (Math/abs (- (double x) (double preferred)))
+                          (Math/abs (- (double y) (double preferred)))))
+        sorted-candidates (sort-by axis-distance candidates)
+        free (first (filter #(not (contains? used-ports (:key %))) sorted-candidates))]
+    (or free (first sorted-candidates))))
+
+(defn- edge-path-from-via
+  [from-port to-port from-side to-side via-x via-y]
+  (let [stub-len route-grid-step
+        side-vertical? (fn [side] (contains? #{:top :bottom} side))
+        side-horizontal? (fn [side] (contains? #{:left :right} side))
+        outward-point (fn [[x y] side]
+                        (case side
+                          :left [(- x stub-len) y]
+                          :right [(+ x stub-len) y]
+                          :top [x (- y stub-len)]
+                          :bottom [x (+ y stub-len)]
+                          [x y]))
+        from-stub (outward-point from-port from-side)
+        to-stub (outward-point to-port to-side)
+        [sx sy] from-stub
+        [tx ty] to-stub
+        x-lane (or via-x (/ (+ sx tx) 2.0))
+        y-lane (or via-y (/ (+ sy ty) 2.0))
+        core (cond
+              (and (side-vertical? from-side) (side-vertical? to-side))
+               [[sx sy] [sx y-lane] [tx y-lane] [tx ty]]
+
+              (and (side-horizontal? from-side) (side-horizontal? to-side))
+               [[sx sy] [x-lane sy] [x-lane y-lane] [tx y-lane] [tx ty]]
+
+              (and (side-horizontal? from-side) (side-vertical? to-side))
+               [[sx sy] [x-lane sy] [x-lane y-lane] [tx y-lane] [tx ty]]
+
+              (and (side-vertical? from-side) (side-horizontal? to-side))
+               [[sx sy] [sx y-lane] [tx y-lane] [tx ty]]
+
+              :else
+               [[sx sy] [tx ty]])
+        points (->> (concat [from-port] core [to-port])
+                    (mapv (fn [[x y]] [(double x) (double y)]))
+                    compact-points
+                    orthogonalize-path
+                    compact-points)]
+    {:points points
+     :usage-keys (cond-> []
+                   (side-horizontal? from-side) (conj [:x (double x-lane)])
+                   true (conj [:y (double y-lane)]))}))
+
+(defn- edge-segment-hits-rect?
+  [[p1 p2] rect]
+  (let [[x1 y1] p1
+        [x2 y2] p2]
+    (segment-intersects-rect? x1 y1 x2 y2 rect)))
+
+(defn- path-rect-violations
+  [path-points all-rects ignored]
+  (count
+   (for [segment (path-segments path-points)
+         rect all-rects
+         :when (and (not (contains? ignored rect))
+                    (edge-segment-hits-rect? segment rect))]
+     true)))
+
+(defn- path-overlap-violations
+  [path-points placed-segments]
+  (count
+   (for [segment (path-segments path-points)
+         placed placed-segments
+         :when (collinear-overlap? segment placed)]
+     true)))
+
+(defn- path-length
+  [path-points]
+  (reduce + 0.0
+          (for [[[x1 y1] [x2 y2]] (path-segments path-points)]
+            (+ (Math/abs (- (double x2) (double x1)))
+               (Math/abs (- (double y2) (double y1)))))))
+
+(defn- lane-candidates
+  [bounds]
+  (let [min-x (snap-grid (:min-x bounds))
+        max-x (snap-grid (:max-x bounds))
+        step (long route-grid-step)]
+    (vec (range (long min-x) (inc (long max-x)) step))))
+
+(defn- lane-candidates-y
+  [bounds]
+  (let [min-y (snap-grid (:min-y bounds))
+        max-y (snap-grid (:max-y bounds))
+        step (long route-grid-step)]
+    (vec (range (long min-y) (inc (long max-y)) step))))
+
+(defn- directional-lane-candidates
+  [bounds start-x side]
+  (let [all-lanes (lane-candidates bounds)
+        directed (case side
+                   :left (filter #(<= (double %) (double start-x)) all-lanes)
+                   :right (filter #(>= (double %) (double start-x)) all-lanes)
+                   all-lanes)
+        usable (if (seq directed) directed all-lanes)]
+    (vec (sort-by #(Math/abs (- (double %) (double start-x))) usable))))
+
+(defn- nearest-lanes
+  [lanes target n]
+  (->> lanes
+       (sort-by #(Math/abs (- (double %) (double target))))
+       (take n)
+       vec))
+
+(defn- interval
+  [a b]
+  [(min (double a) (double b))
+   (max (double a) (double b))])
+
+(defn- interval-overlap?
+  [[a1 a2] [b1 b2]]
+  (ranges-overlap? a1 a2 b1 b2))
+
+(defn- usage-intervals-for-path
+  [points usage-keys]
+  (let [segments (path-segments points)]
+    (reduce (fn [acc usage-key]
+              (let [[axis lane] usage-key
+                    lane (double lane)
+                    intervals (case axis
+                                :x (->> segments
+                                        (keep (fn [[[x1 y1] [x2 y2]]]
+                                                (when (and (< (Math/abs (- (double x1) (double x2))) 0.1)
+                                                           (< (Math/abs (- (double x1) lane)) 0.1)
+                                                           (> (Math/abs (- (double y1) (double y2))) 0.1))
+                                                  (interval y1 y2))))
+                                        vec)
+                                :y (->> segments
+                                        (keep (fn [[[x1 y1] [x2 y2]]]
+                                                (when (and (< (Math/abs (- (double y1) (double y2))) 0.1)
+                                                           (< (Math/abs (- (double y1) lane)) 0.1)
+                                                           (> (Math/abs (- (double x1) (double x2))) 0.1))
+                                                  (interval x1 x2))))
+                                        vec)
+                                [])]
+                (assoc acc usage-key intervals)))
+            {}
+            usage-keys)))
+
+(defn- lane-overlap-count
+  [lane-usage usage-intervals]
+  (count
+   (for [[usage-key intervals] usage-intervals
+         interval intervals
+         existing (get lane-usage usage-key [])
+         :when (interval-overlap? interval existing)]
+     true)))
+
+(defn- route-edge-on-lanes
+  [edge bounds placed-segments lane-usage used-ports]
+  (let [from-rect (:from-rect edge)
+        to-rect (:to-rect edge)
+        ignored #{from-rect to-rect}
+        from-row (rect-row from-rect)
+        to-row (rect-row to-rect)
+        [from-side to-side*] (desired-port-sides from-rect to-rect bounds)
+        from-preferred (if (#{:top :bottom} from-side)
+                         (rect-center-x to-rect)
+                         (rect-center-y to-rect))
+        from-port* (choose-port from-rect from-side from-preferred used-ports)
+        used-ports* (conj used-ports (:key from-port*))
+        [from-x from-y] (:point from-port*)
+        to-sides (if (#{:top :bottom :left :right} to-side*)
+                   [to-side*]
+                   (if (#{:left :right} from-side)
+                     [from-side :top :bottom]
+                     [:top :bottom]))
+        scored (for [to-side to-sides
+                     :let [[x-lanes y-lanes]
+                           (cond
+                             (and (#{:top :bottom} from-side) (#{:top :bottom} to-side))
+                             [[nil] (lane-candidates-y bounds)]
+
+                             (#{:left :right} from-side)
+                             [(nearest-lanes (directional-lane-candidates bounds from-x from-side)
+                                             from-x
+                                             64)
+                              (nearest-lanes (lane-candidates-y bounds)
+                                             (/ (+ from-y (rect-center-y to-rect)) 2.0)
+                                             64)]
+
+                             :else
+                             [[nil] [nil]])]
+                     via-x x-lanes
+                     via-y y-lanes
+                     :let [to-preferred (if (#{:top :bottom} to-side) from-x from-y)
+                           to-port* (choose-port to-rect to-side to-preferred used-ports*)
+                           to-port (:point to-port*)
+                           from-port (:point from-port*)
+                           {:keys [points usage-keys]} (edge-path-from-via from-port to-port from-side to-side
+                                                                         (when via-x (double via-x))
+                                                                         (when via-y (double via-y)))
+                           usage-intervals (usage-intervals-for-path points usage-keys)
+                           rect-viol (path-rect-violations points (:all-rects edge) ignored)
+                           overlap-viol (path-overlap-violations points placed-segments)
+                           lane-overlap (lane-overlap-count lane-usage usage-intervals)
+                           target-side-penalty (cond
+                                                 (and (< from-row to-row) (not= to-side :top)) 40.0
+                                                 (and (> from-row to-row) (not= to-side :bottom)) 40.0
+                                                 :else 0.0)
+                           score (+ (* 1000000.0 rect-viol)
+                                    (* 100000.0 overlap-viol)
+                                    (* 300000.0 lane-overlap)
+                                    target-side-penalty
+                                    (path-length points))]]
+                 {:usage-intervals usage-intervals
+                  :lane-overlap lane-overlap
+                  :usage-keys usage-keys
+                  :score score
+                  :points points
+                  :rect-viol rect-viol
+                  :to-side to-side
+                  :to-port-key (:key to-port*)})
+        no-rect-cross (filter #(zero? (:rect-viol %)) scored)
+        no-lane-overlap (filter #(zero? (:lane-overlap %)) no-rect-cross)
+        candidates (cond
+                     (seq no-lane-overlap) no-lane-overlap
+                     (seq no-rect-cross) no-rect-cross
+                     :else scored)
+        best (->> candidates
+                  (sort-by (juxt :score :rect-viol))
+                  first)]
+    [(assoc edge
+            :route-points (:points best)
+            :from-side from-side
+            :to-side (:to-side best)
+            :anchored? true
+            :selected-usage-keys (:usage-keys best))
+     (conj used-ports* (:to-port-key best))
+     (reduce (fn [acc [usage-key intervals]]
+               (update acc usage-key (fnil into []) intervals))
+             lane-usage
+             (:usage-intervals best))]))
+
+(defn- deterministic-routed-edges
+  [edge-drawables route-bounds]
+  (let [ordered (->> edge-drawables
+                     (sort-by (fn [edge]
+                                [(- (Math/abs (- (rect-center-y (:to-rect edge))
+                                                 (rect-center-y (:from-rect edge)))))
+                                 (if (:cycle-break? edge) 0 1)
+                                 (:from edge)
+                                 (:to edge)]))
+                     vec)]
+    (loop [remaining ordered
+           routed []
+           placed-segments []
+           lane-usage {}
+           used-ports #{}]
+      (if (empty? remaining)
+        routed
+        (let [edge (first remaining)
+              [edge' used-ports lane-usage] (route-edge-on-lanes edge route-bounds placed-segments lane-usage used-ports)
+              segments (vec (path-segments (:route-points edge')))]
+          (recur (rest remaining)
+                 (conj routed (dissoc edge' :selected-usage-keys))
+                 (into placed-segments segments)
+                 lane-usage
+                 used-ports))))))
 
 (defn- prepare-edge-drawables
   [scene declutter-mode]
-  (let [points (module-point-map scene)
+  (let [module->rect (->> (:layer-rects scene)
+                          (keep (fn [rect]
+                                  (when-let [module (:module rect)]
+                                    [module rect])))
+                          (into {}))
         layer-rect-by-index (into {} (map (juxt :index identity) (:layer-rects scene)))
         module->layer (into {} (map (juxt :module :layer) (:module-positions scene)))
         route-bounds {:min-x 14.0
@@ -1471,28 +1923,18 @@
                                              (:layer-rects scene))))}
         edge-drawables (->> (declutter-edge-drawables scene declutter-mode)
                             (mapv (fn [{:keys [from to] :as edge}]
-                                    (let [from-layer (if (number? from)
-                                                       from
-                                                       (get module->layer from))
-                                          to-layer (if (number? to)
-                                                     to
-                                                     (get module->layer to))]
+                                    (let [from-layer (if (number? from) from (get module->layer from))
+                                          to-layer (if (number? to) to (get module->layer to))
+                                          from-rect (or (get module->rect from)
+                                                        (get layer-rect-by-index from-layer))
+                                          to-rect (or (get module->rect to)
+                                                      (get layer-rect-by-index to-layer))]
                                       (assoc edge
-                                             :from-rect (get layer-rect-by-index from-layer)
-                                             :to-rect (get layer-rect-by-index to-layer)
+                                             :from-rect from-rect
+                                             :to-rect to-rect
                                              :all-rects (:layer-rects scene)
                                              :route-bounds route-bounds)))))]
-    (let [spaced (apply-parallel-arrow-spacing edge-drawables points)]
-      (let [routed (route-engine/route-edges
-                     {:spaced-edges spaced
-                      :resolve-edge-path (fn [edge]
-                                           (resolved-edge-path points route-bounds edge))
-                      :normalize-route-endpoints normalize-route-endpoints
-                      :place-non-overlapping-path place-non-overlapping-path
-                      :path-segments path-segments})]
-        (if (> (count routed) 1)
-          (global-optimize-routes routed)
-          routed)))))
+    (deterministic-routed-edges edge-drawables route-bounds)))
 
 (defn- filter-routed-edges
   [routed declutter-mode]
@@ -1510,19 +1952,20 @@
   (vec (or (:edge-drawables scene) [])))
 
 (defn- draw-toolbar
-  [{:keys [namespace-path declutter-mode nav-stack]}]
+  [{:keys [namespace-path nav-stack]}]
   (canvas/draw-toolbar {:namespace-path namespace-path
-                        :declutter-mode declutter-mode
                         :nav-stack nav-stack}
                        {:back-button-rect back-button-rect
-                        :declutter-button-rect declutter-button-rect
                         :back-button-label back-button-label
-                        :declutter-label declutter-label
                         :toolbar-height toolbar-height}))
 
 (defn- draw-tooltip
   [full-name mx my]
   (canvas/draw-tooltip full-name mx my))
+
+(defn- draw-tooltip-lines
+  [lines mx my]
+  (canvas/draw-tooltip-lines lines mx my))
 
 (defn- point->segment-distance
   [px py x1 y1 x2 y2]
@@ -1542,6 +1985,39 @@
             proj-y (+ y1 (* t dy))]
         (Math/sqrt (+ (* (- px proj-x) (- px proj-x))
                       (* (- py proj-y) (- py proj-y))))))))
+
+(defn- triangle-sign
+  [[px py] [ax ay] [bx by]]
+  (- (* (- px bx) (- ay by))
+     (* (- ax bx) (- py by))))
+
+(defn- point-in-triangle?
+  [mx my [[ax ay :as a] [bx by :as b] [cx cy :as c]]]
+  (let [p [mx my]
+        d1 (triangle-sign p a b)
+        d2 (triangle-sign p b c)
+        d3 (triangle-sign p c a)
+        has-neg? (or (neg? d1) (neg? d2) (neg? d3))
+        has-pos? (or (pos? d1) (pos? d2) (pos? d3))]
+    (not (and has-neg? has-pos?))))
+
+(defn hovered-dependency
+  [indicators mx my]
+  (let [mx (double mx)
+        my (double my)]
+    (->> indicators
+         (map (fn [{:keys [triangle] :as indicator}]
+                (let [inside? (point-in-triangle? mx my triangle)
+                      edges (map vector triangle (concat (rest triangle) [(first triangle)]))
+                      nearest-edge (reduce min Double/MAX_VALUE
+                                           (map (fn [[[x1 y1] [x2 y2]]]
+                                                  (point->segment-distance mx my x1 y1 x2 y2))
+                                                edges))]
+                  (when (or inside? (<= nearest-edge dependency-triangle-hover-tolerance))
+                    (assoc indicator :hover-distance nearest-edge)))))
+         (remove nil?)
+         (sort-by :hover-distance)
+         first)))
 
 (defn hovered-edge
   ([spaced-edges points bounds mx my]
@@ -1605,24 +2081,18 @@
 
 (defn- draw-scene
   [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}]
-  (let [routed (or (:routed-edges state)
-                   (if (:skip-routing? state)
-                     (unrouted-edges scene)
-                     (precompute-routed-edges scene)))]
-    (canvas/draw-scene state
-                       {:scaled-content-height scaled-content-height
-                        :point-in-toolbar? point-in-toolbar?
-                        :module-point-map module-point-map
-                        :prepare-edge-drawables (fn [_ mode]
-                                                  (filter-routed-edges routed mode))
-                        :hovered-edge hovered-edge
-                        :hovered-module-position hovered-module-position
-                        :hovered-layer-label hovered-layer-label
-                        :edge-hover-label edge-hover-label
-                        :draw-scene-content draw-scene-content
-                        :draw-toolbar draw-toolbar
-                        :draw-tooltip draw-tooltip
-                        :draw-scrollbar draw-scrollbar})))
+  (canvas/draw-scene state
+                     {:scaled-content-height scaled-content-height
+                      :point-in-toolbar? point-in-toolbar?
+                      :dependency-indicators dependency-indicators
+                      :hovered-dependency hovered-dependency
+                      :hovered-module-position hovered-module-position
+                      :hovered-layer-label hovered-layer-label
+                      :draw-scene-content draw-scene-content
+                      :draw-toolbar draw-toolbar
+                      :draw-tooltip draw-tooltip
+                      :draw-tooltip-lines draw-tooltip-lines
+                      :draw-scrollbar draw-scrollbar}))
 
 (defn- plus-key?
   [k]
@@ -1755,8 +2225,6 @@
   (events/handle-mouse-released state event
                                 {:point-in-rect? point-in-rect?
                                  :back-button-rect back-button-rect
-                                 :declutter-button-rect declutter-button-rect
-                                 :next-declutter-mode next-declutter-mode
                                  :drilldown-scene drilldown-scene
                                  :toolbar-height toolbar-height
                                  :hovered-module-position hovered-module-position
@@ -1769,8 +2237,6 @@
   (events/handle-mouse-clicked state event
                                {:point-in-rect? point-in-rect?
                                 :back-button-rect back-button-rect
-                                :declutter-button-rect declutter-button-rect
-                                :next-declutter-mode next-declutter-mode
                                 :drilldown-scene drilldown-scene
                                 :toolbar-height toolbar-height
                                 :hovered-module-position hovered-module-position
@@ -1786,16 +2252,13 @@
   [state path scroll-x scroll-y]
   (let [view (view-architecture (:architecture state) path)
         scene (-> (build-scene view)
-                  (attach-drillable-markers (:architecture state) path))
-        routed-edges (if (:skip-routing? state)
-                       (unrouted-edges scene)
-                       (precompute-routed-edges scene))]
+                  (attach-drillable-markers (:architecture state) path))]
     (assoc state
            :namespace-path path
            :scroll-x (double (or scroll-x 0.0))
            :scroll-y (double (or scroll-y 0.0))
            :scene scene
-           :routed-edges routed-edges)))
+           :routed-edges nil)))
 
 (defn initial-scene-for-show
   [scene architecture]
@@ -1820,9 +2283,6 @@
                 skip-routing? false}}]
    (let [effective-architecture (or architecture {:scene scene})
          initial-scene (initial-scene-for-show scene architecture)
-         initial-routed-edges (if skip-routing?
-                               (unrouted-edges initial-scene)
-                               (precompute-routed-edges initial-scene))
          content-height (if (seq (:layer-rects initial-scene))
                           (->> (:layer-rects initial-scene)
                                (map (fn [{:keys [y height]}] (+ y height)))
@@ -1848,7 +2308,7 @@
                  :dragging-scrollbar? false
                  :drag-offset nil
                  :skip-routing? skip-routing?
-                 :routed-edges initial-routed-edges
+                 :routed-edges nil
                  :viewport-height viewport-height
                  :viewport-width width})
        :draw draw-scene

@@ -11,8 +11,30 @@
 
 (defn colorize-clojure-html
   [source]
-  (let [escaped (html-escape source)
-        comment-pattern (Pattern/compile "(?m);.*$")
+  (let [split-comment (fn [line]
+                        (loop [idx 0
+                               in-string? false
+                               escaped? false]
+                          (if (>= idx (count line))
+                            [line nil]
+                            (let [ch (.charAt line idx)]
+                              (cond
+                                (and (not in-string?) (= ch \;))
+                                [(subs line 0 idx) (subs line idx)]
+
+                                escaped?
+                                (recur (inc idx) in-string? false)
+
+                                (and in-string? (= ch \\))
+                                (recur (inc idx) in-string? true)
+
+                                (= ch \")
+                                (recur (inc idx) (not in-string?) false)
+
+                                :else
+                                (recur (inc idx) in-string? false))))))
+        [code-part comment-part] (split-comment (or source ""))
+        escaped (html-escape code-part)
         string-pattern (Pattern/compile "\"([^\"\\\\]|\\\\.)*\"")
         keyword-pattern (Pattern/compile ":[a-zA-Z0-9\\-\\?!_\\./]+")
         apply-style (fn [text pattern class-name]
@@ -26,10 +48,11 @@
                             (do
                               (.appendTail matcher sb)
                               (str sb))))))]
-    (-> escaped
-        (apply-style string-pattern "str")
-        (apply-style keyword-pattern "kw")
-        (apply-style comment-pattern "cmt"))))
+    (str (-> escaped
+             (apply-style string-pattern "str")
+             (apply-style keyword-pattern "kw"))
+         (when comment-part
+           (str "<span class='cmt'>" (html-escape comment-part) "</span>")))))
 
 (defn expand-tabs
   [line]

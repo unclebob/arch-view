@@ -51,7 +51,6 @@
     (let [state {:namespace-path ["a"]}
           deps {:point-in-rect? (fn [rect x y] (and (= 0 (:id rect)) (= x 1.0) (= y 1.0)))
                 :back-button-rect (fn [] {:id 0})
-                :declutter-button-rect (fn [] {:id 1})
                 :toolbar-height 38.0}]
       (should= :back (sut/toolbar-click-target state 1.0 1.0 deps))
       (should= nil (sut/toolbar-click-target state 2.0 2.0 deps))
@@ -59,13 +58,12 @@
                (sut/navigate-up {:v 1 :nav-stack [{:path [] :scroll-x 0.0 :scroll-y 0.0}]}
                                 {:drilldown-scene (fn [s _ _ _] (assoc s :nav-stack []))}))))
 
-  (it "targets declutter button and returns state unchanged when nav stack is empty"
+  (it "returns state unchanged when nav stack is empty"
     (let [state {:namespace-path []}
           deps {:point-in-rect? (fn [rect x y] (and (= (:id rect) 1) (= x 2.0) (= y 2.0)))
                 :back-button-rect (fn [] {:id 0})
-                :declutter-button-rect (fn [] {:id 1})
                 :toolbar-height 38.0}]
-      (should= :declutter (sut/toolbar-click-target state 2.0 2.0 deps))
+      (should= nil (sut/toolbar-click-target state 2.0 2.0 deps))
       (should= {:v 2}
                (sut/navigate-up {:v 2}
                                 {:drilldown-scene (fn [s _ _ _] (assoc s :unexpected true))}))))
@@ -74,22 +72,18 @@
     (let [state {:namespace-path ["a"] :declutter-mode :all :nav-stack []}
           deps {:point-in-rect? (fn [rect x y] (and (= (:hit rect) [x y]) true))
                 :back-button-rect (fn [] {:hit [1.0 1.0]})
-                :declutter-button-rect (fn [] {:hit [2.0 2.0]})
-                :next-declutter-mode (fn [_] :abstract)
                 :drilldown-scene (fn [s _ _ _] (assoc s :went-back true))
                 :toolbar-height 38.0}
           back (sut/apply-toolbar-click (assoc state :nav-stack [{:path [] :scroll-x 0.0 :scroll-y 0.0}]) {:x 1.0 :y 1.0} deps)
           declutter (sut/apply-toolbar-click state {:x 2.0 :y 2.0} deps)
           none (sut/apply-toolbar-click state {:x 2.0 :y 80.0} deps)]
       (should= true (:went-back back))
-      (should= :abstract (:declutter-mode declutter))
+      (should= state declutter)
       (should= nil none)))
 
   (it "handles mouse release for dragging reset, toolbar click, and drilldown fallback"
     (let [deps {:point-in-rect? (fn [_ _ _] false)
                 :back-button-rect (fn [] {:x 0})
-                :declutter-button-rect (fn [] {:x 0})
-                :next-declutter-mode (fn [m] m)
                 :drilldown-scene (fn [s _ _ _] s)
                 :toolbar-height 38.0
                 :hovered-module-position (fn [& _] nil)
@@ -100,10 +94,7 @@
           toolbar-hit (sut/handle-mouse-released {:dragging-scrollbar? false :drag-offset 10.0}
                                                  {:x 5.0 :y 5.0}
                                                  (assoc deps
-                                                        :point-in-rect? (fn [rect x y] false)
-                                                        :declutter-button-rect (fn [] {:hit [5.0 5.0]})
-                                                        :point-in-rect? (fn [rect x y] (= [x y] (:hit rect)))
-                                                        :next-declutter-mode (fn [_] :abstract)))
+                                                        :point-in-rect? (fn [rect x y] false)))
           drilldown-hit (sut/handle-mouse-released {:dragging-scrollbar? false
                                                     :scene {}
                                                     :namespace-path []
@@ -119,7 +110,7 @@
                                                           :drilldown-scene (fn [s _ _ _] (assoc s :drilled true))))]
       (should= false (:dragging-scrollbar? dragged))
       (should= nil (:drag-offset dragged))
-      (should= :abstract (:declutter-mode toolbar-hit))
+      (should= false (:dragging-scrollbar? toolbar-hit))
       (should= true (:drilled drilldown-hit))))
 
   (it "keeps state when drilldown click hits nothing and opens source for leaf click"

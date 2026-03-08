@@ -13,6 +13,11 @@
       (should= true (str/includes? html "class='kw'"))
       (should= true (str/includes? html "class='cmt'"))))
 
+  (it "does not treat html escape entity semicolons as comments"
+    (let [html (sut/colorize-clojure-html "(visibility-port/set-combat-visibility-port! (->MovementCombatVisibilityPort))")]
+      (should= true (str/includes? html "-&gt;MovementCombatVisibilityPort"))
+      (should= false (str/includes? html "-&gt;<span class='cmt'>;MovementCombatVisibilityPort"))))
+
   (it "renders tab-expanded source lines and wrapper html"
     (let [lines (sut/source-lines->html "\t:ok\n")
           doc (sut/source->html "demo" "\t:ok\n")]

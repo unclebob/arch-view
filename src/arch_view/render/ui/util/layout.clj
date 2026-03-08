@@ -252,6 +252,7 @@
   [:module->component
    :layer->label
    :module->kind
+   :module->cycle?
    :module->leaf?
    :module->source-file
    :module->full-name
@@ -323,7 +324,7 @@
     (+ group-start (* (double peer-idx) spacing))))
 
 (defn- layer-rect-entry
-  [layer-by-index layer row-by-layer-index peer-by-layer-index module->component module->kind module->full-name layer->label
+  [layer-by-index layer row-by-layer-index peer-by-layer-index module->component module->kind module->full-name module->leaf? layer->label
    canvas-width geometry]
   (let [{:keys [index]} layer
         modules (:modules (get layer-by-index index))
@@ -333,32 +334,40 @@
         row (double (get row-by-layer-index index 0))
         {:keys [peer-idx peer-count]} (get peer-by-layer-index index {:peer-idx 0 :peer-count 1})]
     {:index index
+     :module (first modules)
+     :row row
      :x (centered-peer-x canvas-width rect-width peer-idx peer-count)
      :y (+ scene-top-padding (* row (* rect-height 1.5)))
      :width rect-width
      :height rect-height
      :abstract? abstract-layer?
-     :full-name (some-> modules first module->full-name labels/strip-top-namespace)
+     :leaf? (boolean (some #(true? (get module->leaf? %)) modules))
+     :full-name (some-> modules first module->full-name)
      :label (or (get layer->label index)
                 (some-> modules first labels/abbreviate-module-name)
                 (if component (name component) (str "layer-" index)))}))
 
 (defn- decorate-module-position
-  [m module->leaf? module->source-file module->display-label]
-  (assoc m
-         :leaf? (boolean (get module->leaf? (:module m)))
-         :source-file (get module->source-file (:module m))
-         :label (or (get module->display-label (:module m))
-                    (labels/abbreviate-module-name (:module m)))
-         :full-name (labels/strip-top-namespace (:full-name m))))
+  [m rect-by-layer module->cycle? module->leaf? module->source-file module->display-label]
+  (let [rect (get rect-by-layer (:layer m))
+        rect-width (double (or (:width rect) 120.0))
+        max-label-chars (max 8 (long (Math/floor (/ (max 20.0 (- rect-width 12.0)) 7.0))))]
+    (assoc m
+           :cycle? (boolean (get module->cycle? (:module m)))
+           :leaf? (boolean (get module->leaf? (:module m)))
+           :source-file (get module->source-file (:module m))
+           :label (or (get module->display-label (:module m))
+                      (labels/abbreviate-module-name (:module m)))
+           :max-label-chars max-label-chars
+           :full-name (:full-name m))))
 
 (defn- scene-module-positions
-  [layers rect-by-layer module->kind module->full-name module->leaf? module->source-file module->display-label]
+  [layers rect-by-layer module->kind module->full-name module->cycle? module->leaf? module->source-file module->display-label]
   (->> layers
        (mapcat (fn [{:keys [index modules]}]
                  (->> (module-positions-for-layer index modules (get rect-by-layer index) module->kind module->full-name)
                       (map (fn [m]
-                             (decorate-module-position m module->leaf? module->source-file module->display-label)))
+                             (decorate-module-position m rect-by-layer module->cycle? module->leaf? module->source-file module->display-label)))
                       labels/apply-layer-stagger)))
        vec))
 
@@ -367,7 +376,8 @@
   (let [feedback-pairs (->> (get-in architecture [:layout :feedback-edges] #{})
                             (map (juxt :from :to))
                             set)]
-    (->> (:classified-edges architecture)
+    (->> (or (:display-edges architecture)
+             (:classified-edges architecture))
        (map (fn [{:keys [from to type count]}]
               {:from from
                :to to
@@ -382,17 +392,17 @@
    (build-scene architecture {}))
   ([architecture {:keys [canvas-width layer-height layer-gap]
                   :or {canvas-width 1200 layer-height 140 layer-gap 24}}]
-   (let [{:keys [layers layer-by-index row-by-layer-index peer-by-layer-index module->component layer->label module->kind
+   (let [{:keys [layers layer-by-index row-by-layer-index peer-by-layer-index module->component layer->label module->kind module->cycle?
                  module->leaf? module->source-file module->full-name module->display-label]}
          (scene-inputs architecture)
          geometry (layer-rect-geometry canvas-width layer-height)
          layer-rects (mapv (fn [layer]
                              (layer-rect-entry layer-by-index layer row-by-layer-index peer-by-layer-index
-                                               module->component module->kind module->full-name layer->label
+                                               module->component module->kind module->full-name module->leaf? layer->label
                                                canvas-width geometry))
                            layers)
          rect-by-layer (into {} (map (juxt :index identity) layer-rects))]
      {:layer-rects layer-rects
-      :module-positions (scene-module-positions layers rect-by-layer module->kind module->full-name
+      :module-positions (scene-module-positions layers rect-by-layer module->kind module->full-name module->cycle?
                                                 module->leaf? module->source-file module->display-label)
       :edge-drawables (scene-edge-drawables architecture)})))

@@ -45,6 +45,17 @@
       (should= false (:abstract? (get by-label "alpha")))
       (should= true (:abstract? (get by-label "beta")))))
 
+  (it "marks module labels as cycle-related when subtree contains a cycle"
+    (let [architecture {:layout {:layers [{:index 0 :modules ["alpha"]}
+                                          {:index 1 :modules ["beta"]}]
+                                 :module->layer {"alpha" 0 "beta" 1}}
+                        :module->cycle? {"alpha" true}
+                        :classified-edges #{}}
+          scene (sut/build-scene architecture {:canvas-width 1000 :layer-height 120 :layer-gap 30})
+          by-module (into {} (map (juxt :module identity) (:module-positions scene)))]
+      (should= true (:cycle? (get by-module "alpha")))
+      (should= false (:cycle? (get by-module "beta")))))
+
   (it "staggers module label y positions when horizontal space is tight"
     (let [architecture {:layout {:layers [{:index 0 :modules ["alpha.beta.long-module-one"
                                                                "alpha.beta.long-module-two"
@@ -101,7 +112,8 @@
   (it "abbreviates module names using parent initials"
     (should= "b.module-name" (sut/abbreviate-module-name "alpha.beta.module-name"))
     (should= "module-name" (sut/abbreviate-module-name "module-name"))
-    (should= "b.c.core" (sut/abbreviate-module-name "app.backend.cache.core")))
+    (should= "b.c.core" (sut/abbreviate-module-name "app.backend.cache.core"))
+    (should= "j.alice" (sut/abbreviate-module-name "bob.jim.alice.clj")))
 
   (it "strips top-level namespace for hover names"
     (should= "beta.module" (sut/strip-top-namespace "alpha.beta.module"))
@@ -113,9 +125,9 @@
 
   (it "labels back button with destination namespace"
     (should= "Back" (#'sut/back-button-label {:namespace-path [] :nav-stack []}))
-    (should= "Back: root" (#'sut/back-button-label {:namespace-path ["application"]
-                                                    :nav-stack [{:path []}]}))
-    (should= "Back: application" (#'sut/back-button-label {:namespace-path ["application" "state"]
+    (should= "Back: application" (#'sut/back-button-label {:namespace-path ["application"]
+                                                           :nav-stack [{:path []}]}))
+    (should= "Back: state" (#'sut/back-button-label {:namespace-path ["application" "state"]
                                                            :nav-stack [{:path ["application"]}]})))
 
   (it "counts crossings between edges based on layer track/row points"
@@ -354,7 +366,7 @@
           next-state (sut/handle-mouse-clicked state {:x (:x one-pos) :y (:y one-pos)})]
       (should= state next-state)))
 
-  (it "marks drillable namespace labels with a plus prefix"
+  (it "marks drillable namespace labels without prefix decoration"
     (let [architecture {:graph {:nodes #{"empire.alpha.one"
                                          "empire.alpha.two"
                                          "empire.beta"}
@@ -365,7 +377,7 @@
           root-scene (sut/build-scene root-view)
           marked (sut/attach-drillable-markers root-scene architecture [])
           labels (into {} (map (juxt :module :display-label) (:module-positions marked)))]
-      (should= "+ alpha" (get labels "alpha"))
+      (should= "alpha" (get labels "alpha"))
       (should= "beta" (get labels "beta"))))
 
   (it "builds grouped initial scene for show when architecture is provided"
@@ -383,8 +395,8 @@
           modules (->> (:module-positions initial) (map :module) set)
           labels (into {} (map (juxt :module :display-label) (:module-positions initial)))]
       (should= #{"alpha" "beta"} modules)
-      (should= "+ alpha" (get labels "alpha"))
-      (should= "+ beta" (get labels "beta"))))
+      (should= "alpha" (get labels "alpha"))
+      (should= "beta" (get labels "beta"))))
 
   (it "orders grouped layers by incoming dependency count"
     (let [architecture {:graph {:nodes #{"empire.ui"
@@ -418,6 +430,20 @@
       (should= "a" (:from edge))
       (should= "b" (:to edge))
       (should= 2 (:count edge))))
+
+  (it "preserves external dependencies in drilldown display edges"
+    (let [architecture {:graph {:nodes #{"empire.acceptance.generator"
+                                         "empire.acceptance.parser.ir-contracts"}
+                                :edges #{}
+                                :abstract-modules #{}}
+                        :classified-edges #{{:from "empire.acceptance.generator"
+                                             :to "empire.acceptance.parser.ir-contracts"
+                                             :type :direct}}}
+          parser-view (sut/view-architecture architecture ["acceptance" "parser"])]
+      (should-not= nil
+                   (some #(and (= (:from %) "empire.acceptance.generator")
+                               (= (:to %) "ir-contracts"))
+                         (:display-edges parser-view)))))
 
   (it "applies 15px parallel spacing to overlapping non-layer edges"
     (let [points {"a" {:x 200.0 :y 60.0}
@@ -672,14 +698,14 @@
           edges (sut/layer-edge-drawables scene)]
       (should= [] edges)))
 
-  (it "cycles declutter mode when declutter button is clicked"
+  (it "does not change declutter mode from toolbar non-back clicks"
     (let [state {:scene {:module-positions [] :layer-rects [] :edge-drawables []}
                  :architecture nil
                  :namespace-path nil
                  :declutter-mode :all
                  :dragging-scrollbar? false}
           next-state (sut/handle-mouse-clicked state {:x 120.0 :y 10.0})]
-      (should= :concrete (:declutter-mode next-state))))
+      (should= :all (:declutter-mode next-state))))
 
   (it "back button pops one namespace level"
     (let [architecture {:graph {:nodes #{"empire.alpha.one"
@@ -731,7 +757,7 @@
       (should= 0.0 (:scroll-y next-state))
       (should= [{:path [] :scroll-y 123.0}] (:nav-stack next-state))))
 
-  (it "labels leaf nodes with source filename extension"
+  (it "labels leaf nodes with source filename base name"
     (let [architecture {:graph {:nodes #{"empire.alpha.one"}
                                 :edges #{}
                                 :abstract-modules #{}
@@ -740,7 +766,7 @@
           alpha-view (sut/view-architecture architecture ["alpha"])
           scene (sut/build-scene alpha-view)
           one-node (some #(when (= "one" (:module %)) %) (:module-positions scene))]
-      (should= "one.cljc" (:label one-node))
+      (should= "one" (:label one-node))
       (should= true (:leaf? one-node))
       (should= "/tmp/one.cljc" (:source-file one-node))))
 
@@ -755,8 +781,8 @@
           app-view (sut/view-architecture architecture ["application"])
           app-scene (sut/attach-drillable-markers (sut/build-scene app-view) architecture ["application"])
           labels (set (map :display-label (:module-positions app-scene)))]
-      (should-not= nil (some #{"+ state"} labels))
-      (should-not= nil (some #{"state.cljc"} labels))))
+      (should-not= nil (some #{"state"} labels))
+      (should-not= nil (some #{"state"} labels))))
 
   (it "marks namespace as abstract when any descendant module is abstract"
     (let [architecture {:graph {:nodes #{"empire.alpha.one.impl"
@@ -892,11 +918,12 @@
                     sut/draw-scene-content (fn [& _])
                     sut/draw-toolbar (fn [& _])
                     sut/draw-scrollbar (fn [& _])
-                    sut/prepare-edge-drawables (fn [& _] [{:from "a" :to "b" :count 2}])
+                    sut/dependency-indicators (fn [& _] [{:tooltip-lines ["a->b(2)"]}])
                     sut/hovered-module-position (fn [& _] {:full-name "module.full" :drillable? true})
                     sut/hovered-layer-label (fn [& _] nil)
-                    sut/hovered-edge (fn [& _] {:from "a" :to "b" :count 2})
-                    sut/draw-tooltip (fn [text _ _] (swap! tooltip-calls conj text))]
+                    sut/hovered-dependency (fn [& _] {:tooltip-lines ["a->b(2)"]})
+                    sut/draw-tooltip (fn [text _ _] (swap! tooltip-calls conj text))
+                    sut/draw-tooltip-lines (fn [lines _ _] (swap! tooltip-calls into lines))]
         (#'sut/draw-scene state)
         (with-redefs [sut/hovered-module-position (fn [& _] nil)
                       sut/hovered-layer-label (fn [& _] {:full-name "layer.full"})]
@@ -1051,20 +1078,49 @@
       (should= true (some #(= [0 0 0] %) @strokes))
       (should= true (some #(= [0 128 0] %) @strokes))))
 
-  (it "prepares edge drawables by attaching layer rectangles and route dependencies"
-    (let [captured (atom nil)
-          scene {:layer-rects [{:index 0 :x 0.0 :y 0.0 :width 100.0 :height 80.0}
-                               {:index 1 :x 200.0 :y 120.0 :width 100.0 :height 80.0}]
-                 :module-positions [{:module "a" :layer 0 :x 20.0 :y 20.0}
-                                    {:module "b" :layer 1 :x 240.0 :y 140.0}]
+  (it "prepares edge drawables by attaching layer rectangles and route points"
+    (let [scene {:layer-rects [{:index [0 "a"] :module "a" :x 0.0 :y 0.0 :width 100.0 :height 80.0}
+                               {:index [1 "b"] :module "b" :x 200.0 :y 120.0 :width 100.0 :height 80.0}]
+                 :module-positions [{:module "a" :layer [0 "a"] :x 20.0 :y 20.0}
+                                    {:module "b" :layer [1 "b"] :x 240.0 :y 140.0}]
                  :edge-drawables [{:from "a" :to "b" :type :direct :arrowhead :standard}]}
-          routed [{:from "a" :to "b" :route-points [[20.0 20.0] [240.0 140.0]]}]]
-      (with-redefs [sut/apply-parallel-arrow-spacing (fn [edges _] edges)
-                    arch-view.render.route-engine/route-edges (fn [deps]
-                                                                (reset! captured deps)
-                                                                routed)]
-        (should= routed (#'sut/prepare-edge-drawables scene :all)))
-      (should= 1 (count (:spaced-edges @captured)))
-      (should-not= nil (:from-rect (first (:spaced-edges @captured))))
-      (should-not= nil (:to-rect (first (:spaced-edges @captured))))))
+          routed (#'sut/prepare-edge-drawables scene :all)
+          edge (first routed)]
+      (should= 1 (count routed))
+      (should-not= nil (:from-rect edge))
+      (should-not= nil (:to-rect edge))
+      (should= true (>= (count (:route-points edge)) 4))))
+
+  (it "routes adjacent levels directly and multi-level edges via rectangle sides"
+    (let [scene {:layer-rects [{:index [0 "a"] :module "a" :row 0 :x 200.0 :y 40.0 :width 100.0 :height 60.0}
+                               {:index [1 "b"] :module "b" :row 1 :x 220.0 :y 130.0 :width 100.0 :height 60.0}
+                               {:index [2 "c"] :module "c" :row 2 :x 500.0 :y 220.0 :width 100.0 :height 60.0}]
+                 :module-positions [{:module "a" :layer [0 "a"] :x 250.0 :y 70.0}
+                                    {:module "b" :layer [1 "b"] :x 270.0 :y 160.0}
+                                    {:module "c" :layer [2 "c"] :x 550.0 :y 250.0}]
+                 :edge-drawables [{:from "a" :to "b" :type :direct :arrowhead :standard}
+                                  {:from "a" :to "c" :type :direct :arrowhead :standard}]}
+          routed (sort-by :to (#'sut/prepare-edge-drawables scene :all))
+          adjacent (first routed)
+          multi (second routed)]
+      (should= "b" (:to adjacent))
+      (should= true (contains? #{:left :right :top :bottom} (:from-side adjacent)))
+      (should= true (contains? #{:left :right :top :bottom} (:to-side adjacent)))
+      (let [pts (:route-points adjacent)
+            [p1 p2] (take-last 2 pts)
+            [s1 s2] (take 2 pts)]
+        (if (contains? #{:left :right} (:from-side adjacent))
+          (should= true (= (second s1) (second s2)))
+          (should= true (= (first s1) (first s2))))
+        (if (contains? #{:left :right} (:to-side adjacent))
+          (should= true (= (second p1) (second p2)))
+          (should= true (= (first p1) (first p2)))))
+      (should= "c" (:to multi))
+      (should= true (>= (count (:route-points multi)) 4))
+      (should= true (contains? #{:left :right} (:from-side multi)))
+      (should= :top (:to-side multi))
+      (let [[[sx _] [x2 _]] (:route-points multi)]
+        (if (= :left (:from-side multi))
+          (should= true (<= x2 sx))
+          (should= true (>= x2 sx))))))
   )
