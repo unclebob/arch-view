@@ -2,7 +2,7 @@
 
 Clojure tool for visualizing a project's architecture as layered namespaces with dependency indicators.
 
-![Empire Top-Level Architecture](examples/empire-top-level.svg)
+![Empire Top-Level Architecture](images/empire-top-level.svg)
 
 ## Dependency Discovery
 
