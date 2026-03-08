@@ -45,6 +45,43 @@
   [{:keys [display-label label]}]
   (or display-label label))
 
+(def ^:private split-break-chars #{\. \- \_ \space})
+
+(defn- split-candidate
+  [label idx target max-chars]
+  (let [ch (.charAt label idx)
+        cut (if (contains? #{\- \_} ch) (inc idx) idx)
+        n (count label)
+        left (subs label 0 cut)
+        right (-> (subs label cut n)
+                  (str/replace #"^[\./]+" ""))
+        ok? (and (<= (count left) max-chars)
+                 (<= (count right) max-chars)
+                 (not (str/blank? left))
+                 (not (str/blank? right)))]
+    (when ok?
+      {:left left
+       :right right
+       :score (Math/abs (- idx target))})))
+
+(defn- convenient-split
+  [label max-chars]
+  (let [n (count label)
+        target (long (/ n 2))]
+    (->> (range 1 (dec n))
+         (keep (fn [idx]
+                 (when (contains? split-break-chars (.charAt label idx))
+                   (split-candidate label idx target max-chars))))
+         (sort-by :score)
+         first)))
+
+(defn- fallback-split
+  [label max-chars]
+  (let [n (count label)
+        fallback-cut (max 1 (min (dec n) max-chars))]
+    {:left (subs label 0 fallback-cut)
+     :right (subs label fallback-cut n)}))
+
 (defn split-label-lines
   [label max-chars]
   (let [label (or label "")
@@ -53,32 +90,8 @@
     (if (or (<= max-chars 0)
             (<= n max-chars))
       [label]
-      (let [target (long (/ n 2))
-            candidates (->> (range 1 (dec n))
-                            (filter (fn [idx]
-                                      (contains? #{\. \- \_ \space} (.charAt label idx)))))
-            choose (fn [idx]
-                     (let [ch (.charAt label idx)
-                           cut (if (contains? #{\- \_} ch) (inc idx) idx)
-                           left (subs label 0 cut)
-                           right (subs label cut n)
-                           right (str/replace right #"^[\./]+" "")]
-                       {:left left
-                        :right right
-                        :score (Math/abs (- idx target))
-                        :ok? (and (<= (count left) max-chars)
-                                  (<= (count right) max-chars)
-                                  (not (str/blank? left))
-                                  (not (str/blank? right)))}))
-            convenient (->> candidates
-                            (map choose)
-                            (filter :ok?)
-                            (sort-by :score)
-                            first)
-            fallback-cut (max 1 (min (dec n) max-chars))
-            fallback {:left (subs label 0 fallback-cut)
-                      :right (subs label fallback-cut n)}
-            {:keys [left right]} (or convenient fallback)]
+      (let [{:keys [left right]} (or (convenient-split label max-chars)
+                                     (fallback-split label max-chars))]
         [(str/trim left) (str/trim right)]))))
 
 (defn rendered-label-lines

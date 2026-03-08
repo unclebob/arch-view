@@ -71,4 +71,14 @@
 
   (it "splits namespace segments after the project root"
     (should= ["ui" "quil" "core"] (sut/namespace-segments "empire.ui.quil.core"))
-    (should= [] (sut/namespace-segments "empire"))))
+    (should= [] (sut/namespace-segments "empire")))
+
+  (it "aggregates edge metadata and upgrades to abstract"
+    (should= {:type :direct :count 1}
+             (#'sut/aggregate-edge nil :direct))
+    (should= {:type :direct :count 3}
+             (#'sut/aggregate-edge {:type :direct :count 2} :direct))
+    (should= {:type :abstract :count 4}
+             (#'sut/aggregate-edge {:type :abstract :count 3} :direct))
+    (should= {:type :abstract :count 4}
+             (#'sut/aggregate-edge {:type :direct :count 3} :abstract))))

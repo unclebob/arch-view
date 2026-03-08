@@ -100,6 +100,53 @@
                                         (reset! indicator-calls (mapv :id indicators)))}))
       (should= [1 2] @indicator-calls)))
 
+  (it "draw-scene-content renders abstract and leaf layers plus multiline labels"
+    (let [rect-calls (atom [])
+          text-calls (atom [])]
+      (with-redefs [quil.core/background (fn [& _])
+                    quil.core/fill (fn [& _])
+                    quil.core/stroke (fn [& _])
+                    quil.core/stroke-weight (fn [& _])
+                    quil.core/rect (fn [& xs] (swap! rect-calls conj xs))
+                    quil.core/text-align (fn [& _])
+                    quil.core/text (fn [& xs] (swap! text-calls conj xs))
+                    quil.core/no-stroke (fn [& _])]
+        (sut/draw-scene-content
+         {:layer-rects [{:x 20 :y 20 :width 100 :height 50 :abstract? true :leaf? false}
+                        {:x 150 :y 20 :width 100 :height 50 :abstract? false :leaf? true}]
+          :module-positions [{:x 70 :y 45 :kind :abstract :display-label "a.long_name"}
+                             {:x 200 :y 45 :kind :concrete :display-label "leaf"}]}
+         320
+         []
+         {:rendered-label (fn [m] (:display-label m))
+          :rendered-label-lines (fn [m]
+                                  (if (= "a.long_name" (:display-label m))
+                                    ["a.long" "name"]
+                                    [(:display-label m)]))
+          :draw-dependency-indicators (fn [_])}))
+      (should= 4 (count @rect-calls))
+      (should= 3 (count @text-calls))))
+
+  (it "draw-scene-content falls back to rendered-label when line splitter is absent"
+    (let [text-calls (atom [])]
+      (with-redefs [quil.core/background (fn [& _])
+                    quil.core/fill (fn [& _])
+                    quil.core/stroke (fn [& _])
+                    quil.core/stroke-weight (fn [& _])
+                    quil.core/rect (fn [& _])
+                    quil.core/text-align (fn [& _])
+                    quil.core/text (fn [& xs] (swap! text-calls conj xs))
+                    quil.core/no-stroke (fn [& _])]
+        (sut/draw-scene-content
+         {:layer-rects []
+          :module-positions [{:x 10 :y 10 :kind :concrete :display-label "fallback"}]
+          :edge-drawables []}
+         120
+         []
+         {:rendered-label (fn [m] (:display-label m))
+          :draw-dependency-indicators (fn [_])}))
+      (should= 1 (count @text-calls))))
+
   (it "draw-toolbar writes back label"
     (let [labels (atom [])]
       (with-redefs [quil.core/no-stroke (fn [& _])
@@ -144,4 +191,27 @@
           :draw-tooltip-lines (fn [lines _ _]
                                 (swap! tooltips into lines))
           :draw-scrollbar (fn [& _])})
-        (should= ["a->b(2)"] @tooltips)))))
+        (should= ["a->b(2)"] @tooltips))))
+
+  (it "draw-hover-tooltip prefers module then layer then dependency"
+    (let [calls (atom [])]
+      (#'sut/draw-hover-tooltip {:full-name "module.core"}
+                                {:full-name "layer.name"}
+                                {:tooltip-lines [{:text "a->b"}]}
+                                10.0 20.0
+                                {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
+                                 :draw-tooltip-lines (fn [lines _ _] (swap! calls conj [:lines lines]))})
+      (#'sut/draw-hover-tooltip nil
+                                {:full-name "layer.name"}
+                                {:tooltip-lines [{:text "a->b"}]}
+                                10.0 20.0
+                                {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
+                                 :draw-tooltip-lines (fn [lines _ _] (swap! calls conj [:lines lines]))})
+      (#'sut/draw-hover-tooltip nil nil {:tooltip-lines [{:text "a->b"}]}
+                                10.0 20.0
+                                {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
+                                 :draw-tooltip-lines (fn [lines _ _] (swap! calls conj [:lines lines]))})
+      (should= [[:tooltip "module.core"]
+                [:tooltip "layer.name"]
+                [:lines [{:text "a->b"}]]]
+               @calls))))

@@ -49,12 +49,10 @@
                 (q/mouse-button)
                 (catch Throwable _
                   nil)))]
-    (cond
-      (keyword? b) b
-      (= b 1) :left
-      (= b 2) :center
-      (= b 3) :right
-      :else nil)))
+    (or (when (keyword? b) b)
+        ({1 :left
+          2 :center
+          3 :right} b))))
 
 (defn world-y-at-screen
   [screen-y scroll-y zoom]
@@ -71,6 +69,15 @@
 (defn scroll-for-world-x
   [world-x screen-x zoom]
   (logic/scroll-for-world-x world-x screen-x zoom))
+
+(defn- event-world-coords
+  [event scroll-x scroll-y zoom]
+  (let [[mx my] (mouse-pos event)
+        z (double (or zoom 1.0))]
+    {:mx mx
+     :my my
+     :world-mx (+ (/ mx z) (/ (double (or scroll-x 0.0)) z))
+     :world-my (+ (/ my z) (/ (double (or scroll-y 0.0)) z))}))
 
 (defn zoom-in-at-screen-pos
   [{:keys [zoom zoom-stack scene viewport-height viewport-width] :as state} screen-x screen-y
@@ -136,6 +143,16 @@
            :scroll-y next-scroll-y
            :zoom-stack (pop stack))))
 
+(defn- child-view-exists?
+  [state candidate view-architecture]
+  (seq (get-in (view-architecture (:architecture state) candidate)
+               [:graph :nodes])))
+
+(defn- open-source-if-present!
+  [hovered open-source-file-window!]
+  (when-let [source-file (:source-file hovered)]
+    (open-source-file-window! source-file)))
+
 (defn zoom-out-at-screen-pos
   [{:keys [zoom zoom-stack scene viewport-height viewport-width] :as state} screen-x screen-y
    {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x]}]
@@ -181,23 +198,18 @@
 (defn apply-drilldown-click
   [{:keys [scene scroll-x scroll-y namespace-path zoom] :as state} event
    {:keys [hovered-module-position view-architecture push-nav-state drilldown-scene open-source-file-window!]}]
-  (let [[mx my] (mouse-pos event)
-        z (double (or zoom 1.0))
-        world-mx (+ (/ mx z) (/ (double (or scroll-x 0.0)) z))
-        world-my (+ (/ my z) (/ (double (or scroll-y 0.0)) z))
+  (let [{:keys [world-mx world-my]} (event-world-coords event scroll-x scroll-y zoom)
         hovered (hovered-module-position (:module-positions scene) world-mx world-my)]
-    (if hovered
-      (let [candidate (conj (or namespace-path []) (:module hovered))
-            child-view (view-architecture (:architecture state) candidate)]
-        (if (seq (get-in child-view [:graph :nodes]))
+    (if-not hovered
+      state
+      (let [candidate (conj (or namespace-path []) (:module hovered))]
+        (if (child-view-exists? state candidate view-architecture)
           (-> state
               push-nav-state
               (drilldown-scene candidate 0.0 0.0))
           (do
-            (when-let [source-file (:source-file hovered)]
-              (open-source-file-window! source-file))
-            state)))
-      state)))
+            (open-source-if-present! hovered open-source-file-window!)
+            state))))))
 
 (defn- zoom-click-in
   [state my {:keys [scaled-content-height clamp-scroll]}]

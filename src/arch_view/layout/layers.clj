@@ -143,50 +143,72 @@
                  (or (= from node) (= to node))))
        set))
 
+(defn- source-node
+  [remaining in-map]
+  (->> remaining
+       (filter #(empty? (get in-map % #{})))
+       sort
+       first))
+
+(defn- sink-node
+  [remaining out-map]
+  (->> remaining
+       (filter #(empty? (get out-map % #{})))
+       sort
+       first))
+
+(defn- cycle-break-node
+  [remaining in-map out-map]
+  (->> remaining
+       (sort-by (fn [n]
+                  [(- (count (get out-map n #{}))
+                      (count (get in-map n #{})))
+                   (str n)]))
+       last))
+
+(defn- node-choice
+  [node side]
+  (when node
+    {:node node :side side}))
+
+(defn- choose-next-node
+  [remaining in-map out-map]
+  (or (node-choice (source-node remaining in-map) :left)
+      (node-choice (sink-node remaining out-map) :right)
+      {:node (cycle-break-node remaining in-map out-map)
+       :side :left}))
+
+(defn- place-node
+  [left right side node]
+  (get {:right [left (conj right node)]
+        :left [(conj left node) right]}
+       side
+       [(conj left node) right]))
+
+(defn- greedy-step
+  [{:keys [remaining active-edges left right] :as state}]
+  (if (empty? remaining)
+    state
+    (let [in-map (incoming-map remaining active-edges)
+          out-map (outgoing-map remaining active-edges)
+          {:keys [node side]} (choose-next-node remaining in-map out-map)
+          [next-left next-right] (place-node left right side node)]
+      {:remaining (disj remaining node)
+       :active-edges (remove-node active-edges node)
+       :left next-left
+       :right next-right})))
+
 (defn- greedy-order
   [nodes edges]
-  (loop [remaining (set nodes)
-         active-edges (set edges)
-         left []
-         right []]
-    (if (empty? remaining)
-      (vec (concat left (reverse right)))
-      (let [in-map (incoming-map remaining active-edges)
-            out-map (outgoing-map remaining active-edges)
-            sources (->> remaining
-                         (filter #(empty? (get in-map % #{})))
-                         sort
-                         vec)
-            sinks (->> remaining
-                       (filter #(empty? (get out-map % #{})))
-                       sort
-                       vec)]
-        (cond
-          (seq sources)
-          (let [n (first sources)]
-            (recur (disj remaining n)
-                   (remove-node active-edges n)
-                   (conj left n)
-                   right))
-
-          (seq sinks)
-          (let [n (first sinks)]
-            (recur (disj remaining n)
-                   (remove-node active-edges n)
-                   left
-                   (conj right n)))
-
-          :else
-          (let [best (->> remaining
-                          (sort-by (fn [n]
-                                     [(- (count (get out-map n #{}))
-                                         (count (get in-map n #{})))
-                                      (str n)]))
-                          last)]
-            (recur (disj remaining best)
-                   (remove-node active-edges best)
-                   (conj left best)
-                   right)))))))
+  (let [{:keys [left right]}
+        (->> {:remaining (set nodes)
+              :active-edges (set edges)
+              :left []
+              :right []}
+             (iterate greedy-step)
+             (drop-while (comp seq :remaining))
+             first)]
+    (vec (concat left (reverse right)))))
 
 (defn- heuristic-feedback-edges
   [nodes edges]

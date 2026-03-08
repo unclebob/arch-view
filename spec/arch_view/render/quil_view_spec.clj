@@ -66,4 +66,10 @@
     (should= 500.0 (sut/clamp-scroll-x 900 1000 500))
     (should= nil (sut/scrollbar-rect 400 500 0 1200))
     (should-not= nil (sut/scrollbar-rect 2000 500 300 1200))
-    (should= 0.0 (sut/thumb-y->scroll 12.0 2000 500))))
+    (should= 0.0 (sut/thumb-y->scroll 12.0 2000 500)))
+
+  (it "labels back button using the current drill path when present"
+    (should= "Back" (#'sut/back-button-label {:namespace-path [] :nav-stack []}))
+    (should= "Back: movement"
+             (#'sut/back-button-label {:namespace-path ["game-mechanics" "movement"]
+                                       :nav-stack [{:namespace-path ["game-mechanics"]}]}))))

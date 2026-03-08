@@ -51,23 +51,25 @@
 
 (defn parse-args
   [args]
-  (loop [remaining args
-         opts {:project-path "." :in-edn nil :no-gui false :out nil :help false}]
-    (if (empty? remaining)
-      opts
-      (let [arg (first remaining)]
-        (cond
-          (= "--help" arg) (recur (next remaining)
-                                  (assoc opts :help true))
-          (= "--project-path" arg) (recur (nnext remaining)
-                                          (assoc opts :project-path (second remaining)))
-          (= "--in-edn" arg) (recur (nnext remaining)
-                                    (assoc opts :in-edn (second remaining)))
-          (= "--out" arg) (recur (nnext remaining)
-                                 (assoc opts :out (second remaining)))
-          (= "--no-gui" arg) (recur (next remaining)
-                                    (assoc opts :no-gui true))
-          :else (recur (next remaining) opts))))))
+  (let [flag-handlers {"--help" (fn [remaining opts]
+                                  [(next remaining) (assoc opts :help true)])
+                       "--no-gui" (fn [remaining opts]
+                                    [(next remaining) (assoc opts :no-gui true)])}
+        value-handlers {"--project-path" :project-path
+                        "--in-edn" :in-edn
+                        "--out" :out}]
+    (loop [remaining args
+           opts {:project-path "." :in-edn nil :no-gui false :out nil :help false}]
+      (if (empty? remaining)
+        opts
+        (let [arg (first remaining)]
+          (if-let [handle-flag (get flag-handlers arg)]
+            (let [[next-remaining next-opts] (handle-flag remaining opts)]
+              (recur next-remaining next-opts))
+            (if-let [key-name (get value-handlers arg)]
+              (recur (nnext remaining)
+                     (assoc opts key-name (second remaining)))
+              (recur (next remaining) opts))))))))
 
 (defn exit-program!
   []

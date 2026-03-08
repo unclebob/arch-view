@@ -1,43 +1,71 @@
 (ns arch-view.render.ui.quil.canvas
   (:require [quil.core :as q]))
 
+(defn- layer-fill!
+  [{:keys [abstract?]}]
+  (if abstract?
+    (q/fill 226 242 226)
+    (q/fill 225 233 242)))
+
+(defn- layer-stroke!
+  [{:keys [leaf?]}]
+  (if leaf?
+    (q/stroke 0 0 0)
+    (q/stroke 120 140 160))
+  (q/stroke-weight (if leaf? 3.0 1.0)))
+
+(defn- draw-non-leaf-nubs!
+  [{:keys [x y height leaf?]}]
+  (when-not leaf?
+    (let [button-width 10.0
+          button-height (/ (double height) 5.0)
+          button-gap (/ (double height) 5.0)
+          first-y (+ (double y) (/ (double height) 5.0))
+          second-y (+ first-y button-height button-gap)
+          button-x (- (double x) button-width)]
+      (q/rect button-x first-y button-width button-height)
+      (q/rect button-x second-y button-width button-height))))
+
+(defn- draw-layer-rect!
+  [{:keys [x y width height] :as layer-rect}]
+  (layer-fill! layer-rect)
+  (layer-stroke! layer-rect)
+  (q/rect x y width height)
+  (draw-non-leaf-nubs! layer-rect))
+
+(defn- label-lines-for
+  [module-position rendered-label rendered-label-lines]
+  (vec (or (when rendered-label-lines
+             (rendered-label-lines module-position))
+           [(rendered-label module-position)])))
+
+(defn- module-label-fill!
+  [{:keys [cycle? kind]}]
+  (if cycle?
+    (q/fill 180 0 0)
+    (if (= :abstract kind)
+      (q/fill 0 128 0)
+      (q/fill 15 20 30))))
+
+(defn- draw-module-label!
+  [{:keys [x y] :as module-position} rendered-label rendered-label-lines]
+  (let [lines (label-lines-for module-position rendered-label rendered-label-lines)
+        line-height 14.0
+        mid (/ (dec (max 1 (count lines))) 2.0)]
+    (module-label-fill! module-position)
+    (q/no-stroke)
+    (q/text-align :center :center)
+    (doseq [[idx line] (map-indexed vector lines)]
+      (q/text line x (+ y (* (- idx mid) line-height))))))
+
 (defn draw-scene-content
   [scene viewport-width dependency-indicators {:keys [rendered-label rendered-label-lines draw-dependency-indicators]}]
   (q/background 250 250 250)
-  (doseq [{:keys [x y width height abstract? leaf?]} (:layer-rects scene)]
-    (if abstract?
-      (q/fill 226 242 226)
-      (q/fill 225 233 242))
-    (if leaf?
-      (q/stroke 0 0 0)
-      (q/stroke 120 140 160))
-    (q/stroke-weight (if leaf? 3.0 1.0))
-    (q/rect x y width height)
-    (when-not leaf?
-      (let [button-width 10.0
-            button-height (/ (double height) 5.0)
-            button-gap (/ (double height) 5.0)
-            first-y (+ (double y) (/ (double height) 5.0))
-            second-y (+ first-y button-height button-gap)
-            button-x (- (double x) button-width)]
-        (q/rect button-x first-y button-width button-height)
-        (q/rect button-x second-y button-width button-height))))
+  (doseq [layer-rect (:layer-rects scene)]
+    (draw-layer-rect! layer-rect))
   (q/stroke-weight 1.0)
-  (doseq [{:keys [x y kind cycle?] :as module-position} (:module-positions scene)]
-    (let [lines (vec (or (when rendered-label-lines
-                           (rendered-label-lines module-position))
-                         [(rendered-label module-position)]))
-          line-height 14.0
-          mid (/ (dec (max 1 (count lines))) 2.0)]
-    (if cycle?
-      (q/fill 180 0 0)
-      (if (= :abstract kind)
-      (q/fill 0 128 0)
-        (q/fill 15 20 30)))
-    (q/no-stroke)
-    (q/text-align :center :center)
-      (doseq [[idx line] (map-indexed vector lines)]
-        (q/text line x (+ y (* (- idx mid) line-height))))))
+  (doseq [module-position (:module-positions scene)]
+    (draw-module-label! module-position rendered-label rendered-label-lines))
   (draw-dependency-indicators dependency-indicators))
 
 (defn draw-toolbar
@@ -152,6 +180,20 @@
     (:full-name hovered-layer) (draw-tooltip (:full-name hovered-layer) mx my)
     hovered-dependency (draw-tooltip-lines (:tooltip-lines hovered-dependency) mx my)))
 
+(defn- hover-state
+  [interactive-canvas? scene deps world-mx world-my
+   {:keys [hovered-dependency hovered-module-position hovered-layer-label]}]
+  {:dependency (when interactive-canvas?
+                 (hovered-dependency deps world-mx world-my))
+   :module (when interactive-canvas?
+             (hovered-module-position (:module-positions scene) world-mx world-my))
+   :layer (when interactive-canvas?
+            (hovered-layer-label (:layer-rects scene) world-mx world-my))})
+
+(defn- cursor-style
+  [hovered-module]
+  (if (:drillable? hovered-module) :cross :arrow))
+
 (defn draw-scene
   [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}
    {:keys [scaled-content-height point-in-toolbar? module-point-map dependency-indicators
@@ -167,19 +209,16 @@
         world-mx (+ (/ mx z) (/ sx z))
         world-my (+ (/ my z) (/ sy z))
         deps (dependency-indicators scene declutter-mode)
-        hovered-dep (when interactive-canvas?
-                      (hovered-dependency deps world-mx world-my))
-        hovered (when interactive-canvas?
-                  (hovered-module-position (:module-positions scene) world-mx world-my))
-        hovered-layer (when interactive-canvas?
-                        (hovered-layer-label (:layer-rects scene) world-mx world-my))]
-    (q/cursor (if (:drillable? hovered)
-                :cross
-                :arrow))
+        {:keys [dependency module layer]}
+        (hover-state interactive-canvas? scene deps world-mx world-my
+                     {:hovered-dependency hovered-dependency
+                      :hovered-module-position hovered-module-position
+                      :hovered-layer-label hovered-layer-label})]
+    (q/cursor (cursor-style module))
     (draw-zoomed-scene scene viewport-width deps z sx sy
                        {:draw-scene-content draw-scene-content})
     (draw-toolbar state)
-    (draw-hover-tooltip hovered hovered-layer hovered-dep mx my
+    (draw-hover-tooltip module layer dependency mx my
                         {:draw-tooltip draw-tooltip
                          :draw-tooltip-lines draw-tooltip-lines})
     (draw-scrollbar content-height viewport-height scroll-y viewport-width)))
