@@ -231,6 +231,37 @@
                (sut/navigate-up {:v 1 :nav-stack [{:path [] :scroll-x 0.0 :scroll-y 0.0}]}
                                 {:drilldown-scene (fn [s _ _ _] (assoc s :nav-stack []))}))))
 
+  (it "restores the saved scene snapshot when navigating up"
+    (let [saved-scene {:module-positions [{:module "parent"}]}
+          out (sut/navigate-up {:namespace-path ["parent" "child"]
+                                :scene {:module-positions [{:module "child"}]}
+                                :nav-stack [{:path []
+                                             :scene {:module-positions [{:module "root"}]}
+                                             :scroll-x 0.0
+                                             :scroll-y 0.0
+                                             :zoom 1.0
+                                             :zoom-stack []}
+                                            {:path ["parent"]
+                                             :scene saved-scene
+                                             :scroll-x 14.0
+                                             :scroll-y 28.0
+                                             :zoom 1.6
+                                             :zoom-stack [{:zoom 1.3}]}]}
+                               {:drilldown-scene (fn [_ _ _ _]
+                                                  (throw (ex-info "should not rebuild" {})))})]
+      (should= ["parent"] (:namespace-path out))
+      (should= saved-scene (:scene out))
+      (should= 14.0 (:scroll-x out))
+      (should= 28.0 (:scroll-y out))
+      (should= 1.6 (:zoom out))
+      (should= [{:path []
+                 :scene {:module-positions [{:module "root"}]}
+                 :scroll-x 0.0
+                 :scroll-y 0.0
+                 :zoom 1.0
+                 :zoom-stack []}]
+               (:nav-stack out)))))
+
   (it "returns state unchanged when nav stack is empty"
     (let [state {:namespace-path []}
           deps {:point-in-rect? (fn [rect x y] (and (= (:id rect) 1) (= x 2.0) (= y 2.0)))
@@ -336,4 +367,4 @@
                              :hovered-module-position (fn [& _] {:module "m" :source-file "/tmp/m.clj"})))]
       (should= base-state no-hover)
       (should= leaf-state leaf-click)
-      (should= "/tmp/m.clj" @opened))))
+      (should= "/tmp/m.clj" @opened)))

@@ -29,9 +29,20 @@
       (should= {:module-positions []} (:scene next-state))))
 
   (it "pushes current namespace and scroll values onto nav stack"
-    (let [state {:namespace-path ["a" "b"] :scroll-x 11 :scroll-y 22 :nav-stack []}
+    (let [state {:namespace-path ["a" "b"]
+                 :scene {:module-positions [{:module "b"}]}
+                 :scroll-x 11
+                 :scroll-y 22
+                 :zoom 1.4
+                 :zoom-stack [{:zoom 1.2}]
+                 :nav-stack []}
           next-state (sut/push-nav-state state)]
-      (should= [{:path ["a" "b"] :scroll-x 11.0 :scroll-y 22.0}]
+      (should= [{:path ["a" "b"]
+                 :scene {:module-positions [{:module "b"}]}
+                 :scroll-x 11.0
+                 :scroll-y 22.0
+                 :zoom 1.4
+                 :zoom-stack [{:zoom 1.2}]}]
                (:nav-stack next-state))))
 
   (it "builds initial scene from architecture root when architecture is provided"

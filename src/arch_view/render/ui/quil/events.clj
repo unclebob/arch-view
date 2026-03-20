@@ -191,10 +191,21 @@
   [{:keys [nav-stack] :as state} {:keys [drilldown-scene]}]
   (let [stack (vec (or nav-stack []))]
     (if (seq stack)
-      (let [{:keys [path scroll-x scroll-y]} (peek stack)]
-        (-> state
-            (assoc :nav-stack (pop stack))
-            (drilldown-scene (vec (or path [])) scroll-x scroll-y)))
+      (let [{:keys [path scene scroll-x scroll-y zoom zoom-stack]} (peek stack)
+            popped-stack (pop stack)]
+        (if scene
+          (assoc state
+                 :nav-stack popped-stack
+                 :namespace-path (vec (or path []))
+                 :scene scene
+                 :scroll-x (double (or scroll-x 0.0))
+                 :scroll-y (double (or scroll-y 0.0))
+                 :zoom (double (or zoom 1.0))
+                 :zoom-stack (vec (or zoom-stack []))
+                 :routed-edges nil)
+          (-> state
+              (assoc :nav-stack popped-stack)
+              (drilldown-scene (vec (or path [])) scroll-x scroll-y))))
       state)))
 
 (defn apply-toolbar-click
