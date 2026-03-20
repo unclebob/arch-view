@@ -1,6 +1,7 @@
 ;; mutation-tested: 2026-03-08
 (ns arch-view.render.ui.util.layout
-  (:require [arch-view.render.ui.util.labels :as labels]))
+  (:require [clojure.string :as str]
+            [arch-view.render.ui.util.labels :as labels]))
 
 (def ^:private scene-top-padding 42.0)
 (def ^:private racetrack-count 5)
@@ -259,6 +260,17 @@
    :module->full-name
    :module->display-label])
 
+(defn- layout-cycle-lines
+  [architecture module->display-label]
+  (let [cycles (get-in architecture [:layout :cycles] [])]
+    (mapv (fn [cycle]
+            (->> cycle
+                 (map (fn [module]
+                        (or (get module->display-label module)
+                            (labels/abbreviate-module-name module))))
+                 (str/join "->")))
+          cycles)))
+
 (defn- extract-architecture-maps
   [architecture]
   (reduce (fn [acc k]
@@ -402,8 +414,11 @@
                                                module->component module->kind module->full-name module->leaf? layer->label
                                                canvas-width geometry))
                            layers)
-         rect-by-layer (into {} (map (juxt :index identity) layer-rects))]
+         rect-by-layer (into {} (map (juxt :index identity) layer-rects))
+         cycle-lines (or (:cycle-lines architecture)
+                         (layout-cycle-lines architecture module->display-label))]
      {:layer-rects layer-rects
       :module-positions (scene-module-positions layers rect-by-layer module->kind module->full-name module->cycle?
                                                 module->leaf? module->source-file module->display-label)
-      :edge-drawables (scene-edge-drawables architecture)})))
+      :edge-drawables (scene-edge-drawables architecture)
+      :cycle-lines cycle-lines})))

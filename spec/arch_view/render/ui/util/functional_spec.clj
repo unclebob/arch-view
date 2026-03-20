@@ -22,12 +22,17 @@
     (let [placement (sut/assign-layer-slots [0 1 2] [[0 1] [2 1]] {0 0 1 4 2 0})
           architecture {:layout {:layers [{:index 0 :modules ["a"]}
                                           {:index 1 :modules ["b"]}]
-                                 :module->layer {"a" 0 "b" 1}}
+                                 :module->layer {"a" 0 "b" 1}
+                                 :cycles [["a" "b" "a"]]}
+                        :module->display-label {"a" "alpha"
+                                                "b" "beta"}
+                        :cycle-lines ["deep.alpha->deep.beta->deep.alpha"]
                         :classified-edges #{{:from "a" :to "b" :type :direct}}}
           scene (sut/build-scene architecture)]
       (should= 3 (count (set (vals placement))))
       (should= 2 (count (:layer-rects scene)))
-      (should= 1 (count (:edge-drawables scene)))))
+      (should= 1 (count (:edge-drawables scene)))
+      (should= ["deep.alpha->deep.beta->deep.alpha"] (:cycle-lines scene))))
 
   (it "uses label helpers"
     (should= "b.module" (sut/abbreviate-module-name "alpha.beta.module"))

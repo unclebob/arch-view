@@ -95,8 +95,10 @@
         (should= nil (sut/apply-zoom-click state {:button :right :x 40.0 :y 80.0} deps)))))
 
   (it "handles mouse wheel events from number and map payloads"
-    (let [deps {:scaled-content-height (fn [_ _] 1000.0)
-                :clamp-scroll (fn [v _ _] v)}
+    (let [deps {:scaled-content-width (fn [_ _] 1200.0)
+                :scaled-content-height (fn [_ _] 1000.0)
+                :clamp-scroll (fn [v _ _] v)
+                :clamp-scroll-x (fn [v _ _] v)}
           state {:scene {} :scroll-y 10.0 :viewport-height 400 :viewport-width 700 :zoom 1.0}
           numeric (sut/handle-mouse-wheel state 2 deps)
           mapped (sut/handle-mouse-wheel state {:count -1} deps)
@@ -105,25 +107,104 @@
       (should= -20.0 (:scroll-y mapped))
       (should= 10.0 (:scroll-y unknown))))
 
-  (it "starts and updates scrollbar dragging when thumb is hit"
-    (let [deps-press {:scaled-content-height (fn [_ _] 1000.0)
+  (it "scrolls hovered dependency tooltip instead of scene scroll when the popup is long"
+    (let [tooltip-lines (mapv (fn [n] {:text (str "dep-" n) :cycle? false}) (range 40))
+          deps {:scaled-content-width (fn [_ _] 1200.0)
+                :scaled-content-height (fn [_ _] 1000.0)
+                :clamp-scroll (fn [v _ _] v)
+                :clamp-scroll-x (fn [v _ _] v)
+                :point-in-toolbar? (fn [_ _] false)
+                :dependency-indicators (fn [& _] [:deps])
+                :hovered-dependency (fn [& _] {:module "a" :direction :incoming :tooltip-lines tooltip-lines})}
+          state {:scene {}
+                 :declutter-mode :all
+                 :scroll-y 10.0
+                 :dependency-tooltip-scroll 0.0
+                 :viewport-height 200
+                 :viewport-width 700
+                 :zoom 1.0}]
+      (with-redefs [quil.core/mouse-x (fn [] 20.0)
+                    quil.core/mouse-y (fn [] 80.0)]
+        (let [out (sut/handle-mouse-wheel state 2 deps)]
+          (should= 10.0 (:scroll-y out))
+          (should= 60.0 (:dependency-tooltip-scroll out))
+          (should-not= nil (:dependency-tooltip-key out))))))
+
+  (it "starts and updates vertical scrollbar dragging when thumb is hit"
+    (let [deps-press {:scaled-content-width (fn [_ _] 600.0)
+                      :scaled-content-height (fn [_ _] 1000.0)
+                      :clamp-scroll (fn [v _ _] v)
+                      :clamp-scroll-x (fn [v _ _] v)
                       :scrollbar-rect (fn [& _] {:x 10.0 :y 50.0 :width 8.0 :height 100.0})
+                      :horizontal-scrollbar-rect (fn [& _] nil)
                       :point-in-rect? (fn [_ x y] (and (<= 10.0 x 18.0) (<= 50.0 y 150.0)))}
-          deps-drag {:scaled-content-height (fn [_ _] 1000.0)
-                     :thumb-y->scroll (fn [thumb-y _ _] thumb-y)}
+          deps-drag {:scaled-content-width (fn [_ _] 600.0)
+                     :scaled-content-height (fn [_ _] 1000.0)
+                     :clamp-scroll (fn [v _ _] v)
+                     :clamp-scroll-x (fn [v _ _] v)
+                     :thumb-y->scroll (fn [thumb-y _ _] thumb-y)
+                     :thumb-x->scroll (fn [thumb-x _ _] thumb-x)}
           base {:scene {} :scroll-y 0.0 :viewport-height 400 :viewport-width 700 :zoom 1.0}
           pressed (sut/handle-mouse-pressed base {:x 12.0 :y 60.0} deps-press)
-          dragged (sut/handle-mouse-dragged (assoc pressed :dragging-scrollbar? true) {:x 12.0 :y 100.0} deps-drag)]
-      (should= true (:dragging-scrollbar? pressed))
+          dragged (sut/handle-mouse-dragged pressed {:x 12.0 :y 100.0} deps-drag)]
+      (should= :vertical (:dragging-scrollbar? pressed))
       (should= 10.0 (:drag-offset pressed))
       (should= 90.0 (:scroll-y dragged))))
 
+  (it "starts and updates horizontal scrollbar dragging when thumb is hit"
+    (let [deps-press {:scaled-content-width (fn [_ _] 1000.0)
+                      :scaled-content-height (fn [_ _] 300.0)
+                      :clamp-scroll (fn [v _ _] v)
+                      :clamp-scroll-x (fn [v _ _] v)
+                      :scrollbar-rect (fn [& _] nil)
+                      :horizontal-scrollbar-rect (fn [& _] {:x 50.0 :y 388.0 :width 120.0 :height 8.0})
+                      :point-in-rect? (fn [_ x y] (and (<= 50.0 x 170.0) (<= 388.0 y 396.0)))}
+          deps-drag {:scaled-content-width (fn [_ _] 1000.0)
+                     :scaled-content-height (fn [_ _] 300.0)
+                     :clamp-scroll (fn [v _ _] v)
+                     :clamp-scroll-x (fn [v _ _] v)
+                     :thumb-y->scroll (fn [thumb-y _ _] thumb-y)
+                     :thumb-x->scroll (fn [thumb-x _ _] thumb-x)}
+          base {:scene {} :scroll-x 0.0 :viewport-height 400 :viewport-width 700 :zoom 1.0}
+          pressed (sut/handle-mouse-pressed base {:x 60.0 :y 390.0} deps-press)
+          dragged (sut/handle-mouse-dragged pressed {:x 120.0 :y 390.0} deps-drag)]
+      (should= :horizontal (:dragging-scrollbar? pressed))
+      (should= 10.0 (:drag-offset pressed))
+      (should= 110.0 (:scroll-x dragged))))
+
   (it "returns state unchanged when not dragging"
-    (let [state {:scene {} :dragging-scrollbar? false :viewport-height 400 :zoom 1.0}
+    (let [state {:scene {} :dragging-scrollbar? false :viewport-height 400 :viewport-width 700 :zoom 1.0}
           out (sut/handle-mouse-dragged state {:x 0 :y 0}
-                                        {:scaled-content-height (fn [_ _] 1000.0)
-                                         :thumb-y->scroll (fn [v _ _] v)})]
-      (should= state out)))
+                                        {:scaled-content-width (fn [_ _] 1000.0)
+                                         :scaled-content-height (fn [_ _] 1000.0)
+                                         :clamp-scroll (fn [v _ _] v)
+                                         :clamp-scroll-x (fn [v _ _] v)
+                                         :thumb-y->scroll (fn [v _ _] v)
+                                         :thumb-x->scroll (fn [v _ _] v)})]
+      (should= false (:dragging-scrollbar? out))
+      (should= 700.0 (:viewport-width out))
+      (should= 400.0 (:viewport-height out))
+      (should= 0.0 (:scroll-x out))
+      (should= 0.0 (:scroll-y out))))
+
+  (it "syncs viewport size from the live canvas and clamps scroll positions"
+    (with-redefs [quil.core/width (fn [] 640.0)
+                  quil.core/height (fn [] 480.0)]
+      (let [state {:scene {}
+                   :zoom 1.0
+                   :viewport-width 1200.0
+                   :viewport-height 900.0
+                   :scroll-x 900.0
+                   :scroll-y 700.0}
+            synced (sut/sync-viewport-size state
+                                           {:scaled-content-width (fn [_ _] 800.0)
+                                            :scaled-content-height (fn [_ _] 600.0)
+                                            :clamp-scroll (fn [v content viewport] (min v (- content viewport)))
+                                            :clamp-scroll-x (fn [v content viewport] (min v (- content viewport)))})]
+        (should= 640.0 (:viewport-width synced))
+        (should= 480.0 (:viewport-height synced))
+        (should= 160.0 (:scroll-x synced))
+        (should= 120.0 (:scroll-y synced)))))
 
   (it "maps button kinds from keyword, numeric, and fallback mouse-button"
     (with-redefs [quil.core/mouse-button (fn [] 2)]
@@ -142,6 +223,7 @@
     (let [state {:namespace-path ["a"]}
           deps {:point-in-rect? (fn [rect x y] (and (= 0 (:id rect)) (= x 1.0) (= y 1.0)))
                 :back-button-rect (fn [] {:id 0})
+                :reanalyze-button-rect (fn [] {:id 2})
                 :toolbar-height 38.0}]
       (should= :back (sut/toolbar-click-target state 1.0 1.0 deps))
       (should= nil (sut/toolbar-click-target state 2.0 2.0 deps))
@@ -153,6 +235,7 @@
     (let [state {:namespace-path []}
           deps {:point-in-rect? (fn [rect x y] (and (= (:id rect) 1) (= x 2.0) (= y 2.0)))
                 :back-button-rect (fn [] {:id 0})
+                :reanalyze-button-rect nil
                 :toolbar-height 38.0}]
       (should= nil (sut/toolbar-click-target state 2.0 2.0 deps))
       (should= {:v 2}
@@ -163,13 +246,15 @@
     (let [state {:namespace-path ["a"] :declutter-mode :all :nav-stack []}
           deps {:point-in-rect? (fn [rect x y] (and (= (:hit rect) [x y]) true))
                 :back-button-rect (fn [] {:hit [1.0 1.0]})
+                :reanalyze-button-rect (fn [] {:hit [2.0 2.0]})
+                :reanalyze-state (fn [s] (assoc s :reanalyzed true))
                 :drilldown-scene (fn [s _ _ _] (assoc s :went-back true))
                 :toolbar-height 38.0}
           back (sut/apply-toolbar-click (assoc state :nav-stack [{:path [] :scroll-x 0.0 :scroll-y 0.0}]) {:x 1.0 :y 1.0} deps)
-          declutter (sut/apply-toolbar-click state {:x 2.0 :y 2.0} deps)
+          reanalyze (sut/apply-toolbar-click state {:x 2.0 :y 2.0} deps)
           none (sut/apply-toolbar-click state {:x 2.0 :y 80.0} deps)]
       (should= true (:went-back back))
-      (should= state declutter)
+      (should= true (:reanalyzed reanalyze))
       (should= nil none)))
 
   (it "handles mouse release for dragging reset, toolbar click, and drilldown fallback"
@@ -181,7 +266,7 @@
                 :view-architecture (fn [& _] nil)
                 :push-nav-state identity
                 :open-source-file-window! (fn [& _])}
-          dragged (sut/handle-mouse-released {:dragging-scrollbar? true :drag-offset 10.0} {:x 0 :y 0} deps)
+          dragged (sut/handle-mouse-released {:dragging-scrollbar? :vertical :drag-offset 10.0} {:x 0 :y 0} deps)
           toolbar-hit (sut/handle-mouse-released {:dragging-scrollbar? false :drag-offset 10.0}
                                                  {:x 5.0 :y 5.0}
                                                  (assoc deps
@@ -218,8 +303,8 @@
                 :view-architecture (fn [& _] {:graph {:nodes #{}}})
                 :push-nav-state identity
                 :open-source-file-window! (fn [& _])}]
-      (should= {:dragging-scrollbar? true}
-               (sut/handle-mouse-clicked {:dragging-scrollbar? true} {:x 0 :y 0} deps))
+      (should= {:dragging-scrollbar? :vertical}
+               (sut/handle-mouse-clicked {:dragging-scrollbar? :vertical} {:x 0 :y 0} deps))
       (should= true
                (:drilled
                 (sut/handle-mouse-clicked base-state

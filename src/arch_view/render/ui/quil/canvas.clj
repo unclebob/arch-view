@@ -67,15 +67,30 @@
   (q/stroke-weight 1.0)
   (doseq [module-position (:module-positions scene)]
     (draw-module-label! module-position rendered-label rendered-label-lines))
-  (draw-dependency-indicators dependency-indicators))
+  (draw-dependency-indicators dependency-indicators)
+  (when (seq (:cycle-lines scene))
+    (let [base-y (+ 28.0
+                    (apply max 0.0 (map (fn [{:keys [y height]}] (+ y height)) (:layer-rects scene))))
+          title-y base-y
+          line-height 16.0]
+      (q/no-stroke)
+      (q/text-align :left :top)
+      (q/fill 120 0 0)
+      (q/text "Cycles:" 20.0 title-y)
+      (doseq [[idx line] (map-indexed vector (:cycle-lines scene))]
+        (q/fill 150 0 0)
+        (q/text line 20.0 (+ title-y 20.0 (* idx line-height)))))))
 
 (defn draw-toolbar
-  [{:keys [namespace-path nav-stack]}
-   {:keys [back-button-rect back-button-label toolbar-height]}]
+  [{:keys [namespace-path nav-stack reload-architecture] :as state}
+   {:keys [back-button-rect back-button-label reanalyze-button-rect reanalyze-button-label toolbar-height]}]
   (let [back-rect (back-button-rect)
         can-go-back? (seq namespace-path)
         back-label (back-button-label {:namespace-path namespace-path
-                                       :nav-stack nav-stack})]
+                                       :nav-stack nav-stack})
+        show-reanalyze? (boolean reload-architecture)
+        reanalyze-rect (when show-reanalyze? (reanalyze-button-rect))
+        reanalyze-label (when show-reanalyze? (reanalyze-button-label state))]
     (q/no-stroke)
     (q/fill 238 242 246)
     (q/rect 0 0 3000 toolbar-height)
@@ -85,7 +100,16 @@
       (q/fill 0 0 0)
       (q/fill 120 120 120))
     (q/text-align :center :center)
-    (q/text back-label (+ (:x back-rect) (/ (:width back-rect) 2.0)) (+ (:y back-rect) (/ (:height back-rect) 2.0)))))
+    (q/text back-label (+ (:x back-rect) (/ (:width back-rect) 2.0)) (+ (:y back-rect) (/ (:height back-rect) 2.0)))
+    (when show-reanalyze?
+      (if (= :running (:reanalyze-status state))
+        (q/fill 210 218 226)
+        (q/fill 225))
+      (q/rect (:x reanalyze-rect) (:y reanalyze-rect) (:width reanalyze-rect) (:height reanalyze-rect))
+      (q/fill 0 0 0)
+      (q/text reanalyze-label
+              (+ (:x reanalyze-rect) (/ (:width reanalyze-rect) 2.0))
+              (+ (:y reanalyze-rect) (/ (:height reanalyze-rect) 2.0))))))
 
 (defn- canvas-dimension
   [getter fallback]
@@ -122,35 +146,69 @@
     (q/text full-name (+ x 6.0) (+ y 10.0))))
 
 (defn draw-tooltip-lines
-  [lines mx my]
-  (let [line-height 16.0
-        line-entries (->> (or lines [])
-                          (map (fn [line]
-                                 (if (map? line)
-                                   line
-                                   {:text (str line) :cycle? false})))
-                          vec)
-        longest (if (seq line-entries) (apply max (map (comp count :text) line-entries)) 0)
-        width (+ 18.0 (* 7.0 longest))
-        height (+ 10.0 (* line-height (max 1 (count line-entries))))
-        [base-x base-y] (clamp-tooltip-origin (+ mx 12.0) (+ my 12.0) width height)]
-    (q/fill 255 255 225)
-    (q/stroke 80 80 80)
-    (q/rect base-x base-y width height)
-    (q/no-stroke)
-    (q/text-align :left :top)
-    (doseq [[idx {:keys [text cycle?]}] (map-indexed vector line-entries)]
-      (if cycle?
-        (q/fill 180 0 0)
-        (q/fill 0 0 0))
-      (q/text text (+ base-x 8.0) (+ base-y 6.0 (* idx line-height))))))
+  ([lines mx my]
+   (draw-tooltip-lines lines mx my {}))
+  ([lines mx my {:keys [scroll-y max-height]
+                 :or {scroll-y 0.0}}]
+   (let [line-height 16.0
+         line-entries (->> (or lines [])
+                           (map (fn [line]
+                                  (if (map? line)
+                                    line
+                                    {:text (str line) :cycle? false})))
+                           vec)
+         longest (if (seq line-entries) (apply max (map (comp count :text) line-entries)) 0)
+         width (+ 18.0 (* 7.0 longest))
+         content-height (+ 10.0 (* line-height (max 1 (count line-entries))))
+         canvas-h (canvas-dimension q/height 900.0)
+         popup-max-height (double (or max-height (max 60.0 (- canvas-h 40.0))))
+         height (min content-height popup-max-height)
+         max-scroll (max 0.0 (- content-height height))
+         scroll-y (-> scroll-y double (max 0.0) (min max-scroll))
+         start-index (max 0 (int (Math/floor (/ scroll-y line-height))))
+         text-offset (mod scroll-y line-height)
+         visible-count (+ 2 (int (Math/ceil (/ height line-height))))
+         visible-lines (->> line-entries (drop start-index) (take visible-count) vec)
+         [base-x base-y] (clamp-tooltip-origin (+ mx 12.0) (+ my 12.0) width height)]
+     (q/fill 255 255 225)
+     (q/stroke 80 80 80)
+     (q/rect base-x base-y width height)
+     (q/no-stroke)
+     (q/text-align :left :top)
+     (doseq [[idx {:keys [text cycle?]}] (map-indexed vector visible-lines)]
+       (if cycle?
+         (q/fill 180 0 0)
+         (q/fill 0 0 0))
+       (q/text text (+ base-x 8.0) (+ base-y 6.0 (- text-offset) (* idx line-height))))
+     (when (pos? max-scroll)
+       (let [track-x (- (+ base-x width) 10.0)
+             track-y (+ base-y 4.0)
+             track-height (- height 8.0)
+             thumb-height (max 24.0 (* track-height (/ height content-height)))
+             thumb-travel (max 1.0 (- track-height thumb-height))
+             thumb-y (+ track-y (* thumb-travel (/ scroll-y max-scroll)))]
+         (q/fill 232 232 210)
+         (q/rect track-x track-y 6.0 track-height)
+         (q/fill 140 140 120)
+         (q/rect track-x thumb-y 6.0 thumb-height))))))
 
 (defn draw-scrollbar
-  [content-height viewport-height scroll-y viewport-width {:keys [scrollbar-rect]}]
-  (when-let [{:keys [x y width height]} (scrollbar-rect content-height viewport-height scroll-y viewport-width)]
+  [content-height viewport-height scroll-y viewport-width {:keys [scrollbar-rect horizontal-scrollbar-visible?]}]
+  (when-let [{:keys [x y width height]} (scrollbar-rect content-height viewport-height scroll-y viewport-width
+                                                         (boolean horizontal-scrollbar-visible?))]
     (q/no-stroke)
     (q/fill 220 220 220)
-    (q/rect (- x 1.0) 10.0 (+ width 2.0) (- viewport-height 20.0))
+    (q/rect (- x 1.0) 10.0 (+ width 2.0) (- viewport-height (if horizontal-scrollbar-visible? 22.0 20.0)))
+    (q/fill 120 120 120)
+    (q/rect x y width height)))
+
+(defn draw-horizontal-scrollbar
+  [content-width viewport-width scroll-x viewport-height {:keys [horizontal-scrollbar-rect vertical-scrollbar-visible?]}]
+  (when-let [{:keys [x y width height]} (horizontal-scrollbar-rect content-width viewport-width scroll-x viewport-height
+                                                                   (boolean vertical-scrollbar-visible?))]
+    (q/no-stroke)
+    (q/fill 220 220 220)
+    (q/rect 10.0 (- y 1.0) (- viewport-width (if vertical-scrollbar-visible? 22.0 20.0)) (+ height 2.0))
     (q/fill 120 120 120)
     (q/rect x y width height)))
 
@@ -179,7 +237,8 @@
   (cond
     hovered (draw-tooltip (:full-name hovered) mx my)
     (:full-name hovered-layer) (draw-tooltip (:full-name hovered-layer) mx my)
-    hovered-dependency (draw-tooltip-lines (:tooltip-lines hovered-dependency) mx my)))
+    hovered-dependency (draw-tooltip-lines (:tooltip-lines hovered-dependency) mx my
+                                           {:scroll-y (:tooltip-scroll hovered-dependency)})))
 
 (defn- hover-state
   [interactive-canvas? scene deps world-mx world-my
@@ -199,7 +258,7 @@
   [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}
    {:keys [scaled-content-height point-in-toolbar? module-point-map dependency-indicators
            hovered-dependency hovered-module-position hovered-layer-label
-           draw-scene-content draw-toolbar draw-tooltip draw-tooltip-lines draw-scrollbar]}]
+           draw-scene-content draw-toolbar draw-tooltip draw-tooltip-lines draw-scrollbars]}]
   (let [z (double (or zoom 1.0))
         content-height (scaled-content-height scene z)
         mx (double (q/mouse-x))
@@ -214,7 +273,9 @@
         (hover-state interactive-canvas? scene deps world-mx world-my
                      {:hovered-dependency hovered-dependency
                       :hovered-module-position hovered-module-position
-                      :hovered-layer-label hovered-layer-label})]
+                      :hovered-layer-label hovered-layer-label})
+        dependency (when dependency
+                     (assoc dependency :tooltip-scroll (double (or (:dependency-tooltip-scroll state) 0.0))))]
     (q/cursor (cursor-style module))
     (draw-zoomed-scene scene viewport-width deps z sx sy
                        {:draw-scene-content draw-scene-content})
@@ -222,4 +283,4 @@
     (draw-hover-tooltip module layer dependency mx my
                         {:draw-tooltip draw-tooltip
                          :draw-tooltip-lines draw-tooltip-lines})
-    (draw-scrollbar content-height viewport-height scroll-y viewport-width)))
+    (draw-scrollbars state)))

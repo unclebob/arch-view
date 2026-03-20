@@ -222,6 +222,41 @@
                (str/join "." (concat namespace-path [(source-filename source-file)]))
                (str/join "." (concat namespace-path [(node-child-name n)])))])))
 
+(defn- format-cycle-line
+  [namespace-path cycle]
+  (->> cycle
+       (map (fn [node]
+              (str/join "." (concat namespace-path [(node-child-name node)]))))
+       (str/join "->")))
+
+(defn- subtree-cycle-lines
+  [all-modules classified namespace-path]
+  (let [scoped (scoped-modules all-modules namespace-path)
+        module->child-map (module->child scoped namespace-path)
+        children (set (vals module->child-map))
+        level-edges (->> classified
+                         (keep (fn [{:keys [from to]}]
+                                 (let [from-child (get module->child-map from)
+                                       to-child (get module->child-map to)]
+                                   (when (and from-child to-child
+                                              (not= from-child to-child))
+                                     {:from from-child :to to-child}))))
+                         set)
+        level-cycles (get (layers/assign-layers {:nodes children :edges level-edges}) :cycles [])
+        descendant-cycles (mapcat (fn [child]
+                                    (let [child-path (conj (vec namespace-path) child)
+                                          deeper? (some (fn [m]
+                                                          (> (count (namespace-segments m))
+                                                             (count child-path)))
+                                                        scoped)]
+                                      (when deeper?
+                                        (subtree-cycle-lines all-modules classified child-path))))
+                                  (sort children))]
+    (->> (concat (map #(format-cycle-line namespace-path %) level-cycles)
+                 descendant-cycles)
+         distinct
+         vec)))
+
 (defn- aggregate-edge
   [old type]
   (if old
@@ -285,6 +320,7 @@
                                 {:from f :to t :type type :count count}))
         display-edges (set (for [[[f t] {:keys [type count]}] display-pairs]
                              {:from f :to t :type type :count count}))
+        cycle-lines (subtree-cycle-lines all-modules (:classified-edges architecture) namespace-path)
         graph {:nodes nodes
                :edges (set (for [{:keys [from to]} classified-edges] {:from from :to to}))
                :abstract-modules (set (for [[n k] module->kind :when (= k :abstract)] n))}
@@ -303,4 +339,5 @@
      :module->leaf? module->leaf?
      :module->source-file module->source-file
      :module->display-label module->display-label
-     :module->full-name module->full-name}))
+     :module->full-name module->full-name
+     :cycle-lines cycle-lines}))

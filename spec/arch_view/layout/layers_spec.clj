@@ -26,8 +26,22 @@
                (set (keys (:module->layer layout))))
       (should= true (every? integer? (vals (:module->layer layout))))
       (should= true (boolean (seq (:feedback-edges layout))))
+      (should= 1 (count (:cycles layout)))
+      (should= #{"a" "b"} (set (first (:cycles layout))))
+      (should= (first (first (:cycles layout))) (last (first (:cycles layout))))
       (should= true (empty? (:feedback-edges (sut/assign-layers {:nodes #{"a" "b"}
                                                                  :edges #{{:from "a" :to "b"}}})))))
+
+  (it "lists more than one feedback-derived cycle when multiple cycles exist"
+    (let [graph {:nodes #{"a" "b" "c" "d"}
+                 :edges #{{:from "a" :to "b"}
+                          {:from "b" :to "a"}
+                          {:from "c" :to "d"}
+                          {:from "d" :to "c"}}}
+          layout (sut/assign-layers graph)]
+      (should= 2 (count (:cycles layout)))
+      (should= true (some #(= ["a" "b" "a"] %) (:cycles layout)))
+      (should= true (some #(= ["c" "d" "c"] %) (:cycles layout)))))
 
   (it "ignores edges that reference nodes outside the graph"
     (let [layout (sut/assign-layers {:nodes #{"a" "b"}

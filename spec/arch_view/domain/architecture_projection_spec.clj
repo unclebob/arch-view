@@ -42,6 +42,9 @@
       (should= "domain_impl" (get (:module->display-label config-view) mixed-leaf))
       (should= "config.domain_impl.cljc" (get (:module->full-name config-view) mixed-leaf))
       (should= true (get (:module->cycle? config-view) mixed-leaf))
+      (should= true (boolean (some #{"config.domain.inner.a->config.domain.inner.b->config.domain.inner.a"
+                                     "config.domain.inner.b->config.domain.inner.a->config.domain.inner.b"}
+                                   (:cycle-lines config-view))))
 
       (should= true (edge-present? (:display-edges config-view)
                                    "empire.other.core" "core" :direct 1))

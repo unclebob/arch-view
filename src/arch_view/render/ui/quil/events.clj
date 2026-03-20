@@ -16,6 +16,14 @@
   [(double (or (:x event) (q/mouse-x)))
    (double (or (:y event) (q/mouse-y)))])
 
+(defn- canvas-dimension
+  [getter fallback]
+  (try
+    (let [value (double (getter))]
+      (if (pos? value) value (double (or fallback 0.0))))
+    (catch Throwable _
+      (double (or fallback 0.0)))))
+
 (defn control-down?
   [event]
   (let [mods (:modifiers event)
@@ -171,10 +179,12 @@
   (logic/point-in-toolbar? mx my toolbar-height))
 
 (defn toolbar-click-target
-  [state mx my {:keys [point-in-rect? back-button-rect toolbar-height]}]
+  [state mx my {:keys [point-in-rect? back-button-rect reanalyze-button-rect toolbar-height]}]
   (cond
     (and (seq (:namespace-path state))
          (point-in-rect? (back-button-rect) mx my)) :back
+    (and reanalyze-button-rect
+         (point-in-rect? (reanalyze-button-rect) mx my)) :reanalyze
     :else nil))
 
 (defn navigate-up
@@ -194,6 +204,7 @@
       nil
       (case (toolbar-click-target state mx my deps)
         :back (navigate-up state deps)
+        :reanalyze ((:reanalyze-state deps) state)
         state))))
 
 (defn apply-drilldown-click
@@ -273,9 +284,42 @@
                 (catch Throwable _
                   0.0)))))
 
+(declare sync-viewport-size)
+
+(def ^:private dependency-tooltip-line-height 16.0)
+(def ^:private dependency-tooltip-padding 10.0)
+
+(defn dependency-tooltip-scroll-range
+  [tooltip-lines viewport-height]
+  (let [line-count (max 1 (count (or tooltip-lines [])))
+        content-height (+ dependency-tooltip-padding
+                          (* dependency-tooltip-line-height line-count))
+        visible-height (min content-height
+                            (max 60.0 (- (double viewport-height) 40.0)))]
+    (max 0.0 (- content-height visible-height))))
+
+(defn dependency-tooltip-key
+  [dependency]
+  (when dependency
+    [(:module dependency)
+     (:direction dependency)
+     (mapv :text (:tooltip-lines dependency))]))
+
+(defn hovered-dependency-at-event
+  [{:keys [scene declutter-mode scroll-x scroll-y zoom] :as state} event
+   {:keys [point-in-toolbar? dependency-indicators hovered-dependency]}]
+  (let [[mx my] (mouse-pos event)]
+    (when-not (point-in-toolbar? mx my)
+      (let [z (double (or zoom 1.0))
+            world-mx (+ (/ mx z) (/ (double (or scroll-x 0.0)) z))
+            world-my (+ (/ my z) (/ (double (or scroll-y 0.0)) z))
+            indicators (dependency-indicators scene declutter-mode)]
+        (hovered-dependency indicators world-mx world-my)))))
+
 (defn handle-key-pressed
   [state event deps]
-  (let [k (:key event)
+  (let [state (sync-viewport-size state deps)
+        k (:key event)
         mouse-x (event-mouse-coord event :x :mouse-x)
         mouse-y (event-mouse-coord event :y :mouse-y)]
     (cond
@@ -286,8 +330,18 @@
 
 (defn handle-mouse-wheel
   [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event
-   {:keys [scaled-content-height clamp-scroll]}]
-  (let [content-height (scaled-content-height scene (or zoom 1.0))
+   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
+           point-in-toolbar? dependency-indicators hovered-dependency]}]
+  (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
+                                         :scaled-content-height scaled-content-height
+                                         :clamp-scroll clamp-scroll
+                                         :clamp-scroll-x clamp-scroll-x})
+        dependency (when (and point-in-toolbar? dependency-indicators hovered-dependency)
+                     (hovered-dependency-at-event state event
+                                                 {:point-in-toolbar? point-in-toolbar?
+                                                  :dependency-indicators dependency-indicators
+                                                  :hovered-dependency hovered-dependency}))
+        tooltip-range (dependency-tooltip-scroll-range (:tooltip-lines dependency) (:viewport-height state))
         units (cond
                 (number? event) (double event)
                 (map? event) (double (or (:count event)
@@ -296,35 +350,90 @@
                                          (:wheel-rotation event)
                                          0))
                 :else 0.0)
-        delta (* 30.0 units)
-        next-scroll (clamp-scroll (+ scroll-y delta) content-height viewport-height)]
-    (assoc state
-           :scroll-y next-scroll
-           :viewport-height viewport-height
-           :viewport-width viewport-width)))
+        delta (* 30.0 units)]
+    (if (and dependency (pos? tooltip-range))
+      (let [next-tooltip-scroll (-> (+ (double (or (:dependency-tooltip-scroll state) 0.0)) delta)
+                                    (max 0.0)
+                                    (min tooltip-range))]
+        (assoc state
+               :dependency-tooltip-scroll next-tooltip-scroll
+               :dependency-tooltip-key (dependency-tooltip-key dependency)))
+      (let [content-height (scaled-content-height (:scene state) (or (:zoom state) 1.0))
+            next-scroll (clamp-scroll (+ (:scroll-y state) delta) content-height (:viewport-height state))]
+        (assoc state
+               :scroll-y next-scroll
+               :viewport-height (:viewport-height state)
+               :viewport-width (:viewport-width state))))))
 
 (defn handle-mouse-pressed
   [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event
-   {:keys [scaled-content-height scrollbar-rect point-in-rect?]}]
-  (let [content-height (scaled-content-height scene (or zoom 1.0))
-        thumb (scrollbar-rect content-height viewport-height scroll-y viewport-width)
+   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
+           scrollbar-rect horizontal-scrollbar-rect point-in-rect?]}]
+  (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
+                                         :scaled-content-height scaled-content-height
+                                         :clamp-scroll clamp-scroll
+                                         :clamp-scroll-x clamp-scroll-x})
+        content-height (scaled-content-height (:scene state) (or (:zoom state) 1.0))
+        content-width (scaled-content-width (:scene state) (or (:zoom state) 1.0))
+        horizontal-visible? (> content-width (:viewport-width state))
+        vertical-visible? (> content-height (:viewport-height state))
+        thumb (scrollbar-rect content-height (:viewport-height state) (:scroll-y state) (:viewport-width state)
+                              horizontal-visible?)
+        h-thumb (horizontal-scrollbar-rect content-width (:viewport-width state) (:scroll-x state) (:viewport-height state)
+                                           vertical-visible?)
         [mx my] (mouse-pos event)]
-    (if (and thumb (point-in-rect? thumb mx my))
+    (cond
+      (and thumb (point-in-rect? thumb mx my))
       (assoc state
-             :dragging-scrollbar? true
+             :dragging-scrollbar? :vertical
              :drag-offset (- my (:y thumb)))
-      state)))
+
+      (and h-thumb (point-in-rect? h-thumb mx my))
+      (assoc state
+             :dragging-scrollbar? :horizontal
+             :drag-offset (- mx (:x h-thumb)))
+
+      :else state)))
 
 (defn handle-mouse-dragged
   [{:keys [scene viewport-height dragging-scrollbar? drag-offset zoom] :as state} event
-   {:keys [scaled-content-height thumb-y->scroll]}]
-  (if-not dragging-scrollbar?
-    state
-    (let [content-height (scaled-content-height scene (or zoom 1.0))
-          [_ mouse-y] (mouse-pos event)
-          thumb-y (- mouse-y (double (or drag-offset 0)))
-          next-scroll (thumb-y->scroll thumb-y content-height viewport-height)]
-      (assoc state :scroll-y next-scroll))))
+   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x
+           thumb-y->scroll thumb-x->scroll]}]
+  (let [state (sync-viewport-size state {:scaled-content-width scaled-content-width
+                                         :scaled-content-height scaled-content-height
+                                         :clamp-scroll clamp-scroll
+                                         :clamp-scroll-x clamp-scroll-x})]
+    (case dragging-scrollbar?
+      :vertical
+      (let [content-height (scaled-content-height (:scene state) (or (:zoom state) 1.0))
+            [_ mouse-y] (mouse-pos event)
+            thumb-y (- mouse-y (double (or drag-offset 0)))
+            next-scroll (thumb-y->scroll thumb-y content-height (:viewport-height state))]
+        (assoc state :scroll-y next-scroll))
+
+      :horizontal
+      (let [content-width (scaled-content-width (:scene state) (or (:zoom state) 1.0))
+            [mouse-x _] (mouse-pos event)
+            thumb-x (- mouse-x (double (or drag-offset 0)))
+            next-scroll (thumb-x->scroll thumb-x content-width (:viewport-width state))]
+        (assoc state :scroll-x next-scroll))
+
+      state)))
+
+(defn sync-viewport-size
+  [{:keys [scene zoom viewport-width viewport-height scroll-x scroll-y] :as state}
+   {:keys [scaled-content-width scaled-content-height clamp-scroll clamp-scroll-x]}]
+  (let [next-viewport-width (canvas-dimension q/width viewport-width)
+        next-viewport-height (canvas-dimension q/height viewport-height)
+        content-width (scaled-content-width scene (or zoom 1.0))
+        content-height (scaled-content-height scene (or zoom 1.0))
+        next-scroll-x (clamp-scroll-x (double (or scroll-x 0.0)) content-width next-viewport-width)
+        next-scroll-y (clamp-scroll (double (or scroll-y 0.0)) content-height next-viewport-height)]
+    (assoc state
+           :viewport-width next-viewport-width
+           :viewport-height next-viewport-height
+           :scroll-x next-scroll-x
+           :scroll-y next-scroll-y)))
 
 (defn handle-mouse-released
   [{:keys [dragging-scrollbar?] :as state} event deps]

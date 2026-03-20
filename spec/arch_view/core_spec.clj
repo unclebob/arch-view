@@ -76,18 +76,23 @@
           a-file (java.io.File. src-dir "my/app/a.clj")
           b-file (java.io.File. src-dir "my/app/b.clj")
           showed? (atom false)
+          reload-fn? (atom false)
           waited? (atom false)
           exited? (atom false)]
       (.mkdirs (.getParentFile a-file))
       (spit a-file "(ns my.app.a (:require [my.app.b :as b]))")
       (spit b-file "(ns my.app.b)")
-      (with-redefs [render/show! (fn [& _] (reset! showed? true) :fake-sketch)
+      (with-redefs [render/show! (fn [_ opts]
+                                   (reset! showed? true)
+                                   (reset! reload-fn? (fn? (:reload-architecture opts)))
+                                   :fake-sketch)
                     render/wait-until-closed! (fn [sketch]
                                                 (when (= :fake-sketch sketch)
                                                   (reset! waited? true)))
                     sut/exit-program! (fn [] (reset! exited? true))]
         (sut/-main "--project-path" (.getAbsolutePath root)))
       (should= true @showed?)
+      (should= true @reload-fn?)
       (should= true @waited?)
       (should= true @exited?)))
 
@@ -164,3 +169,21 @@
                     sut/exit-program! (fn [] nil)]
         (sut/-main "--in-edn" (.getAbsolutePath in-file)))
       (should= true (boolean (and @title* (.contains ^String @title* "input.edn")))))))
+
+  (it "does not expose reanalyze button state for in-edn viewer sessions"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory "arch-view-in-edn-reload" (make-array java.nio.file.attribute.FileAttribute 0)))
+          in-file (java.io.File. root "input.edn")
+          reload* (atom :unset)
+          architecture {:graph {:nodes #{"a"} :edges #{}}
+                        :layout {:layers [{:index 0 :modules ["a"]}]
+                                 :module->layer {"a" 0}}
+                        :classified-edges #{}
+                        :module->component {"a" :x}}]
+      (spit in-file (pr-str architecture))
+      (with-redefs [render/show! (fn [_ opts]
+                                   (reset! reload* (:reload-architecture opts))
+                                   :fake-sketch)
+                    render/wait-until-closed! (fn [_] nil)
+                    sut/exit-program! (fn [] nil)]
+        (sut/-main "--in-edn" (.getAbsolutePath in-file)))
+      (should= nil @reload*)))

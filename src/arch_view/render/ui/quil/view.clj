@@ -38,6 +38,7 @@
 
 (def ^:private toolbar-height 38.0)
 (def ^:private back-button-width 360.0)
+(def ^:private reanalyze-button-width 180.0)
 (def ^:private declutter-button-width 240.0)
 (def ^:private button-height 26.0)
 
@@ -66,7 +67,23 @@
   (let [{:keys [x width]} (back-button-rect)]
     {:x (+ x width 10.0) :y 6.0 :width declutter-button-width :height button-height}))
 
+(defn- reanalyze-button-label
+  [{:keys [reanalyze-status]}]
+  (if (= :running reanalyze-status)
+    "Analyzing..."
+    "Reanalyze"))
+
+(defn- reanalyze-button-rect
+  []
+  (let [{:keys [x width]} (back-button-rect)]
+    {:x (+ x width 10.0) :y 6.0 :width reanalyze-button-width :height button-height}))
+
 (def ^:private racetrack-margin 24.0)
+(def ^:private reanalyze-feedback-ms 1000)
+
+(defn current-time-ms
+  []
+  (System/currentTimeMillis))
 
 (defn build-scene
   ([architecture]
@@ -134,7 +151,10 @@
   (module-hover/hovered-module-position module-positions mx my rendered-label-lines label-width))
 
 (declare view-architecture
+         build-scene-for-path
          drilldown-scene
+         reanalyze-state
+         start-reanalyze-state
          push-nav-state
          point-in-toolbar?)
 
@@ -155,8 +175,16 @@
   (viewport/clamp-scroll-x scroll-x content-width viewport-width))
 
 (defn scrollbar-rect
-  [content-height viewport-height scroll-y viewport-width]
-  (viewport/scrollbar-rect content-height viewport-height scroll-y viewport-width))
+  ([content-height viewport-height scroll-y viewport-width]
+   (viewport/scrollbar-rect content-height viewport-height scroll-y viewport-width))
+  ([content-height viewport-height scroll-y viewport-width horizontal-scrollbar?]
+   (viewport/scrollbar-rect content-height viewport-height scroll-y viewport-width horizontal-scrollbar?)))
+
+(defn horizontal-scrollbar-rect
+  ([content-width viewport-width scroll-x viewport-height]
+   (viewport/horizontal-scrollbar-rect content-width viewport-width scroll-x viewport-height))
+  ([content-width viewport-width scroll-x viewport-height vertical-scrollbar?]
+   (viewport/horizontal-scrollbar-rect content-width viewport-width scroll-x viewport-height vertical-scrollbar?)))
 
 (defn- content-height-for-scene
   [scene]
@@ -178,6 +206,10 @@
   [thumb-y content-height viewport-height]
   (viewport/thumb-y->scroll thumb-y content-height viewport-height))
 
+(defn thumb-x->scroll
+  [thumb-x content-width viewport-width]
+  (viewport/thumb-x->scroll thumb-x content-width viewport-width))
+
 (defn- point-in-rect?
   [{:keys [x y width height]} px py]
   (viewport/point-in-rect? {:x x :y y :width width :height height} px py))
@@ -194,11 +226,15 @@
   (dependency-indicators/dependency-indicators scene declutter-mode strip-top-namespace))
 
 (defn- draw-toolbar
-  [{:keys [namespace-path nav-stack]}]
+  [{:keys [namespace-path nav-stack reload-architecture reanalyze-status] :as state}]
   (canvas/draw-toolbar {:namespace-path namespace-path
-                        :nav-stack nav-stack}
+                        :nav-stack nav-stack
+                        :reload-architecture reload-architecture
+                        :reanalyze-status reanalyze-status}
                        {:back-button-rect back-button-rect
                         :back-button-label back-button-label
+                        :reanalyze-button-rect reanalyze-button-rect
+                        :reanalyze-button-label reanalyze-button-label
                         :toolbar-height toolbar-height}))
 
 (defn- draw-tooltip
@@ -206,17 +242,42 @@
   (canvas/draw-tooltip full-name mx my))
 
 (defn- draw-tooltip-lines
-  [lines mx my]
-  (canvas/draw-tooltip-lines lines mx my))
+  ([lines mx my]
+   (canvas/draw-tooltip-lines lines mx my))
+  ([lines mx my opts]
+   (canvas/draw-tooltip-lines lines mx my opts)))
 
 (defn hovered-dependency
   [indicators mx my]
   (dependency-indicators/hovered-dependency indicators mx my))
 
-(defn- draw-scrollbar
-  [content-height viewport-height scroll-y viewport-width]
-  (canvas/draw-scrollbar content-height viewport-height scroll-y viewport-width
-                         {:scrollbar-rect scrollbar-rect}))
+(defn dependency-tooltip-key
+  [dependency]
+  (events/dependency-tooltip-key dependency))
+
+(defn hovered-dependency-for-state
+  [{:keys [scene declutter-mode scroll-x scroll-y zoom] :as state}]
+  (let [mx (double (q/mouse-x))
+        my (double (q/mouse-y))]
+    (when-not (point-in-toolbar? mx my)
+      (let [z (double (or zoom 1.0))
+            world-mx (+ (/ mx z) (/ (double (or scroll-x 0.0)) z))
+            world-my (+ (/ my z) (/ (double (or scroll-y 0.0)) z))
+            indicators (dependency-indicators scene declutter-mode)]
+        (hovered-dependency indicators world-mx world-my)))))
+
+(defn- draw-scrollbars
+  [{:keys [scene scroll-x scroll-y viewport-height viewport-width zoom]}]
+  (let [content-height (scaled-content-height scene zoom)
+        content-width (scaled-content-width scene zoom)
+        horizontal-visible? (> content-width viewport-width)
+        vertical-visible? (> content-height viewport-height)]
+    (canvas/draw-scrollbar content-height viewport-height scroll-y viewport-width
+                           {:scrollbar-rect scrollbar-rect
+                            :horizontal-scrollbar-visible? horizontal-visible?})
+    (canvas/draw-horizontal-scrollbar content-width viewport-width scroll-x viewport-height
+                                      {:horizontal-scrollbar-rect horizontal-scrollbar-rect
+                                       :vertical-scrollbar-visible? vertical-visible?})))
 
 (defn- draw-scene
   [{:keys [scene declutter-mode scroll-x scroll-y viewport-height viewport-width zoom] :as state}]
@@ -231,7 +292,35 @@
                       :draw-toolbar draw-toolbar
                       :draw-tooltip draw-tooltip
                       :draw-tooltip-lines draw-tooltip-lines
-                      :draw-scrollbar draw-scrollbar}))
+                      :draw-scrollbars draw-scrollbars}))
+
+(defn update-state
+  [state]
+  (let [previous-width (:viewport-width state)
+        now (current-time-ms)
+        state (events/sync-viewport-size state
+                                         {:scaled-content-width scaled-content-width
+                                          :scaled-content-height scaled-content-height
+                                          :clamp-scroll clamp-scroll
+                                          :clamp-scroll-x clamp-scroll-x})
+        state (if (and (:reanalyze-requested? state)
+                       (number? (:reanalyze-started-at state))
+                       (>= (- now (:reanalyze-started-at state)) reanalyze-feedback-ms))
+                (reanalyze-state state)
+                state)
+        state (if (and (:architecture state)
+                       (not= (double (or previous-width 0.0))
+                             (double (or (:viewport-width state) 0.0))))
+                (assoc state :scene (build-scene-for-path (:architecture state)
+                                                          (vec (or (:namespace-path state) []))
+                                                          (:viewport-width state)))
+                state)
+        hovered (hovered-dependency-for-state state)
+        key (dependency-tooltip-key hovered)]
+    (cond
+      (nil? hovered) (assoc state :dependency-tooltip-key nil :dependency-tooltip-scroll 0.0)
+      (not= key (:dependency-tooltip-key state)) (assoc state :dependency-tooltip-key key :dependency-tooltip-scroll 0.0)
+      :else state)))
 
 (defn handle-key-pressed
   [state event]
@@ -244,21 +333,34 @@
 (defn handle-mouse-wheel
   [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event]
   (events/handle-mouse-wheel state event
-                             {:scaled-content-height scaled-content-height
-                              :clamp-scroll clamp-scroll}))
+                             {:scaled-content-width scaled-content-width
+                              :scaled-content-height scaled-content-height
+                              :clamp-scroll clamp-scroll
+                              :clamp-scroll-x clamp-scroll-x
+                              :point-in-toolbar? point-in-toolbar?
+                              :dependency-indicators dependency-indicators
+                              :hovered-dependency hovered-dependency}))
 
 (defn handle-mouse-pressed
   [{:keys [scene scroll-y viewport-height viewport-width zoom] :as state} event]
   (events/handle-mouse-pressed state event
-                               {:scaled-content-height scaled-content-height
+                               {:scaled-content-width scaled-content-width
+                                :scaled-content-height scaled-content-height
+                                :clamp-scroll clamp-scroll
+                                :clamp-scroll-x clamp-scroll-x
                                 :scrollbar-rect scrollbar-rect
+                                :horizontal-scrollbar-rect horizontal-scrollbar-rect
                                 :point-in-rect? point-in-rect?}))
 
 (defn handle-mouse-dragged
   [{:keys [scene viewport-height dragging-scrollbar? drag-offset zoom] :as state} event]
   (events/handle-mouse-dragged state event
-                               {:scaled-content-height scaled-content-height
-                                :thumb-y->scroll thumb-y->scroll}))
+                               {:scaled-content-width scaled-content-width
+                                :scaled-content-height scaled-content-height
+                                :clamp-scroll clamp-scroll
+                                :clamp-scroll-x clamp-scroll-x
+                                :thumb-y->scroll thumb-y->scroll
+                                :thumb-x->scroll thumb-x->scroll}))
 
 (defn- point-in-toolbar?
   [mx my]
@@ -269,8 +371,8 @@
   (events/apply-toolbar-click state event
                               {:point-in-rect? point-in-rect?
                                :back-button-rect back-button-rect
-                               :declutter-button-rect declutter-button-rect
-                               :next-declutter-mode next-declutter-mode
+                               :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
+                               :reanalyze-state start-reanalyze-state
                                :drilldown-scene drilldown-scene
                                :toolbar-height toolbar-height}))
 
@@ -279,6 +381,8 @@
   (events/handle-mouse-released state event
                                 {:point-in-rect? point-in-rect?
                                  :back-button-rect back-button-rect
+                                 :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
+                                 :reanalyze-state start-reanalyze-state
                                  :drilldown-scene drilldown-scene
                                  :toolbar-height toolbar-height
                                  :hovered-module-position hovered-module-position
@@ -291,6 +395,8 @@
   (events/handle-mouse-clicked state event
                                {:point-in-rect? point-in-rect?
                                 :back-button-rect back-button-rect
+                                :reanalyze-button-rect (when (:reload-architecture state) reanalyze-button-rect)
+                                :reanalyze-state start-reanalyze-state
                                 :drilldown-scene drilldown-scene
                                 :toolbar-height toolbar-height
                                 :hovered-module-position hovered-module-position
@@ -302,19 +408,66 @@
   [architecture namespace-path]
   (projection/view-architecture architecture namespace-path))
 
+(defn- scene-canvas-width
+  [viewport-width]
+  (max 1200 (double (or viewport-width 1200.0))))
+
+(defn- build-scene-for-path
+  [architecture path viewport-width]
+  (let [view (view-architecture architecture path)]
+    (-> (build-scene view {:canvas-width (scene-canvas-width viewport-width)})
+        (attach-drillable-markers architecture path))))
+
 (defn- drilldown-scene
   [state path scroll-x scroll-y]
-  (scene-state/drilldown-scene state path scroll-x scroll-y
-                               {:view-architecture view-architecture
-                                :build-scene build-scene
-                                :attach-drillable-markers attach-drillable-markers}))
+  (assoc state
+         :namespace-path path
+         :scroll-x (double (or scroll-x 0.0))
+         :scroll-y (double (or scroll-y 0.0))
+         :scene (build-scene-for-path (:architecture state) path (:viewport-width state))
+         :routed-edges nil))
 
 (defn initial-scene-for-show
   [scene architecture]
-  (scene-state/initial-scene-for-show scene architecture
-                                      {:view-architecture view-architecture
-                                       :build-scene build-scene
-                                       :attach-drillable-markers attach-drillable-markers}))
+  (if architecture
+    (build-scene-for-path architecture [] nil)
+    scene))
+
+(defn reanalyze-state
+  [{:keys [reload-architecture namespace-path] :as state}]
+  (if-not reload-architecture
+    state
+    (let [architecture (reload-architecture)
+          path (vec (or namespace-path []))
+          target-path (if (seq (get-in (view-architecture architecture path) [:graph :nodes]))
+                        path
+                        [])
+          scene (build-scene-for-path architecture target-path (:viewport-width state))]
+      (assoc state
+             :architecture architecture
+             :namespace-path target-path
+             :nav-stack []
+             :scene scene
+             :reanalyze-requested? false
+             :reanalyze-status nil
+             :reanalyze-started-at nil
+             :scroll-x 0.0
+             :scroll-y 0.0
+             :zoom 1.0
+             :zoom-stack []
+             :dependency-tooltip-key nil
+             :dependency-tooltip-scroll 0.0
+             :routed-edges nil))))
+
+(defn start-reanalyze-state
+  [{:keys [reload-architecture reanalyze-status] :as state}]
+  (if (or (nil? reload-architecture)
+          (= :running reanalyze-status))
+    state
+    (assoc state
+           :reanalyze-requested? true
+           :reanalyze-status :running
+           :reanalyze-started-at (current-time-ms))))
 
 (defn- push-nav-state
   [{:keys [namespace-path scroll-x scroll-y nav-stack] :as state}]
@@ -323,7 +476,7 @@
 (defn show!
   ([scene]
    (show! scene {}))
-  ([scene {:keys [title architecture]
+  ([scene {:keys [title architecture reload-architecture]
            :or {title "architecture-viewer"}}]
    (let [effective-architecture (or architecture {:scene scene})
          initial-scene (initial-scene-for-show scene architecture)
@@ -332,12 +485,15 @@
      (q/sketch
        :title title
        :size [width viewport-height]
-      :setup (fn []
+       :features [:resizable]
+       :setup (fn []
                 (view-bootstrap/initial-sketch-state {:scene initial-scene
                                                       :architecture effective-architecture
+                                                      :reload-architecture reload-architecture
                                                       :has-architecture? (boolean architecture)
                                                       :viewport-height viewport-height
                                                       :viewport-width width}))
+       :update update-state
        :draw draw-scene
        :key-pressed handle-key-pressed
        :mouse-wheel handle-mouse-wheel

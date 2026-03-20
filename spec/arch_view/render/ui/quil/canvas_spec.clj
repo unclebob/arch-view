@@ -36,6 +36,23 @@
       (should= true (some #(= [180 0 0] %) @fills))
       (should= true (some #(= [0 0 0] %) @fills))))
 
+  (it "draw-tooltip-lines supports clipped scrolling for long dependency lists"
+    (let [texts (atom [])]
+      (with-redefs [quil.core/width (fn [] 300.0)
+                    quil.core/height (fn [] 120.0)
+                    quil.core/fill (fn [& _])
+                    quil.core/stroke (fn [& _])
+                    quil.core/rect (fn [& _])
+                    quil.core/no-stroke (fn [& _])
+                    quil.core/text-align (fn [& _])
+                    quil.core/text (fn [text _ _] (swap! texts conj text))]
+        (sut/draw-tooltip-lines (mapv (fn [n] {:text (str "line-" n) :cycle? false}) (range 8))
+                                20.0 20.0
+                                {:scroll-y 32.0
+                                 :max-height 60.0}))
+      (should-not= nil (some #{"line-2"} @texts))
+      (should= nil (some #{"line-0"} @texts))))
+
   (it "draw-scrollbar renders when thumb exists and skips when missing"
     (let [rect-calls (atom 0)]
       (with-redefs [quil.core/no-stroke (fn [& _])
@@ -76,7 +93,7 @@
           :draw-toolbar (fn [& _])
           :draw-tooltip (fn [& _] (reset! tooltip-lines :tooltip))
           :draw-tooltip-lines (fn [lines _ _] (reset! tooltip-lines lines))
-          :draw-scrollbar (fn [& _])}))
+          :draw-scrollbars (fn [& _])}))
       (should= nil @tooltip-lines)))
 
   (it "draw-scene-content renders dependency indicators via callback"
@@ -127,6 +144,28 @@
       (should= 4 (count @rect-calls))
       (should= 3 (count @text-calls))))
 
+  (it "draw-scene-content renders cycle list text below the diagram"
+    (let [text-calls (atom [])]
+      (with-redefs [quil.core/background (fn [& _])
+                    quil.core/fill (fn [& _])
+                    quil.core/stroke (fn [& _])
+                    quil.core/stroke-weight (fn [& _])
+                    quil.core/rect (fn [& _])
+                    quil.core/text-align (fn [& _])
+                    quil.core/text (fn [& xs] (swap! text-calls conj xs))
+                    quil.core/no-stroke (fn [& _])]
+        (sut/draw-scene-content
+         {:layer-rects [{:x 20 :y 20 :width 100 :height 50 :abstract? false :leaf? false}]
+          :module-positions [{:x 70 :y 45 :kind :concrete :display-label "node"}]
+          :edge-drawables []
+          :cycle-lines ["a->b->a" "c->d->c"]}
+         320
+         []
+         {:rendered-label (fn [m] (:display-label m))
+          :draw-dependency-indicators (fn [_])}))
+      (should= true (some #(= ["Cycles:" 20.0 98.0] %) @text-calls))
+      (should= true (some #(= ["a->b->a" 20.0 118.0] %) @text-calls))))
+
   (it "draw-scene-content falls back to rendered-label when line splitter is absent"
     (let [text-calls (atom [])]
       (with-redefs [quil.core/background (fn [& _])
@@ -155,9 +194,45 @@
                     quil.core/text-align (fn [& _])
                     quil.core/text (fn [label _ _] (swap! labels conj label))]
         (sut/draw-toolbar
-         {:namespace-path ["a"] :nav-stack []}
+         {:namespace-path ["a"] :nav-stack [] :reload-architecture (fn [] nil)}
          {:back-button-rect (fn [] {:x 0.0 :y 0.0 :width 10.0 :height 10.0})
           :back-button-label (fn [_] "Back")
+          :reanalyze-button-rect (fn [] {:x 20.0 :y 0.0 :width 10.0 :height 10.0})
+          :reanalyze-button-label (fn [_] "Reanalyze")
+          :toolbar-height 38.0})
+      (should= ["Back" "Reanalyze"] @labels))))
+
+  (it "draw-toolbar shows analyzing label while reanalyze is running"
+    (let [labels (atom [])]
+      (with-redefs [quil.core/no-stroke (fn [& _])
+                    quil.core/fill (fn [& _])
+                    quil.core/rect (fn [& _])
+                    quil.core/text-align (fn [& _])
+                    quil.core/text (fn [label _ _] (swap! labels conj label))]
+        (sut/draw-toolbar
+         {:namespace-path ["a"] :nav-stack [] :reload-architecture (fn [] nil) :reanalyze-status :running}
+         {:back-button-rect (fn [] {:x 0.0 :y 0.0 :width 10.0 :height 10.0})
+          :back-button-label (fn [_] "Back")
+          :reanalyze-button-rect (fn [] {:x 20.0 :y 0.0 :width 10.0 :height 10.0})
+          :reanalyze-button-label (fn [state] (if (= :running (:reanalyze-status state))
+                                                "Analyzing..."
+                                                "Reanalyze"))
+          :toolbar-height 38.0})
+      (should= ["Back" "Analyzing..."] @labels))))
+
+  (it "draw-toolbar omits reanalyze label when reload is unavailable"
+    (let [labels (atom [])]
+      (with-redefs [quil.core/no-stroke (fn [& _])
+                    quil.core/fill (fn [& _])
+                    quil.core/rect (fn [& _])
+                    quil.core/text-align (fn [& _])
+                    quil.core/text (fn [label _ _] (swap! labels conj label))]
+        (sut/draw-toolbar
+         {:namespace-path ["a"] :nav-stack [] :reload-architecture nil}
+         {:back-button-rect (fn [] {:x 0.0 :y 0.0 :width 10.0 :height 10.0})
+          :back-button-label (fn [_] "Back")
+          :reanalyze-button-rect (fn [] {:x 20.0 :y 0.0 :width 10.0 :height 10.0})
+          :reanalyze-button-label (fn [_] "Reanalyze")
           :toolbar-height 38.0})
       (should= ["Back"] @labels))))
 
@@ -188,9 +263,9 @@
           :draw-scene-content (fn [& _])
           :draw-toolbar (fn [& _])
           :draw-tooltip (fn [text _ _] (swap! tooltips conj text))
-          :draw-tooltip-lines (fn [lines _ _]
+          :draw-tooltip-lines (fn [lines _ _ & _]
                                 (swap! tooltips into lines))
-          :draw-scrollbar (fn [& _])})
+          :draw-scrollbars (fn [& _])})
         (should= ["a->b(2)"] @tooltips))))
 
   (it "draw-hover-tooltip prefers module then layer then dependency"
@@ -200,17 +275,17 @@
                                 {:tooltip-lines [{:text "a->b"}]}
                                 10.0 20.0
                                 {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
-                                 :draw-tooltip-lines (fn [lines _ _] (swap! calls conj [:lines lines]))})
+                                 :draw-tooltip-lines (fn [lines _ _ & _] (swap! calls conj [:lines lines]))})
       (#'sut/draw-hover-tooltip nil
                                 {:full-name "layer.name"}
                                 {:tooltip-lines [{:text "a->b"}]}
                                 10.0 20.0
                                 {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
-                                 :draw-tooltip-lines (fn [lines _ _] (swap! calls conj [:lines lines]))})
+                                 :draw-tooltip-lines (fn [lines _ _ & _] (swap! calls conj [:lines lines]))})
       (#'sut/draw-hover-tooltip nil nil {:tooltip-lines [{:text "a->b"}]}
                                 10.0 20.0
                                 {:draw-tooltip (fn [text _ _] (swap! calls conj [:tooltip text]))
-                                 :draw-tooltip-lines (fn [lines _ _] (swap! calls conj [:lines lines]))})
+                                 :draw-tooltip-lines (fn [lines _ _ & _] (swap! calls conj [:lines lines]))})
       (should= [[:tooltip "module.core"]
                 [:tooltip "layer.name"]
                 [:lines [{:text "a->b"}]]]

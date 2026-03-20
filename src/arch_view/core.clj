@@ -93,6 +93,9 @@
           (spit out (pr-str architecture)))
         (when-not no-gui
           (-> (render/show! scene {:title (str "architecture-viewer: " (str/trim source-label))
-                                   :architecture architecture})
+                                   :architecture architecture
+                                   :reload-architecture (when-not in-edn
+                                                          (fn []
+                                                            (load-architecture project-path)))})
               (render/wait-until-closed!))
           (exit-program!))))))

@@ -13,9 +13,10 @@
   (int (max 1200 (content-width-for-scene scene))))
 
 (defn initial-sketch-state
-  [{:keys [scene architecture has-architecture? viewport-height viewport-width]}]
+  [{:keys [scene architecture has-architecture? viewport-height viewport-width reload-architecture]}]
   {:scene scene
    :architecture architecture
+   :reload-architecture reload-architecture
    :namespace-path (when has-architecture? [])
    :nav-stack []
    :declutter-mode :all
@@ -24,6 +25,11 @@
    :suppress-next-click? false
    :scroll-x 0.0
    :scroll-y 0.0
+   :reanalyze-requested? false
+   :reanalyze-status nil
+   :reanalyze-started-at nil
+   :dependency-tooltip-scroll 0.0
+   :dependency-tooltip-key nil
    :dragging-scrollbar? false
    :drag-offset nil
    :routed-edges nil

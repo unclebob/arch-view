@@ -246,6 +246,41 @@
     (reduce set/union #{}
             (map #(component-feedback-edges % edges) components))))
 
+(defn- shortest-path
+  [edges start goal]
+  (let [outgoing (outgoing-map (into #{} (mapcat (juxt :from :to) edges)) edges)]
+    (loop [queue (into clojure.lang.PersistentQueue/EMPTY [[start]])
+           seen #{start}]
+      (when-let [path (peek queue)]
+        (let [queue' (pop queue)
+              node (peek path)]
+          (if (= node goal)
+            path
+            (let [[next-queue next-seen]
+                  (reduce (fn [[q s] nbr]
+                            (if (contains? s nbr)
+                              [q s]
+                              [(conj q (conj path nbr)) (conj s nbr)]))
+                          [queue' seen]
+                          (sort (get outgoing node #{})))]
+              (recur next-queue next-seen))))))))
+
+(defn- cycle-path-for-feedback-edge
+  [acyclic-edges {:keys [from to]}]
+  (cond
+    (= from to) [from from]
+    :else
+    (when-let [path (shortest-path acyclic-edges to from)]
+      (vec (cons from path)))))
+
+(defn- cycle-paths
+  [feedback-edges acyclic-edges]
+  (->> feedback-edges
+       (sort-by (juxt :from :to))
+       (keep #(cycle-path-for-feedback-edge acyclic-edges %))
+       distinct
+       vec))
+
 (defn- topological-levels
   [nodes edges]
   (let [outgoing (outgoing-map nodes edges)
@@ -286,6 +321,7 @@
         edges (normalize-edges nodes edges)
         feedback-edges (feedback-edge-set nodes edges)
         acyclic-edges (->> edges (remove feedback-edges) set)
+        cycles (cycle-paths feedback-edges acyclic-edges)
         module->level (topological-levels nodes acyclic-edges)
         module->layer (into {}
                             (for [n (sort nodes)]
@@ -299,5 +335,6 @@
     {:layers layers
      :module->layer module->layer
      :module->level module->level
+     :cycles cycles
      :feedback-edges feedback-edges
      :acyclic-edges acyclic-edges}))

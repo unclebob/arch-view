@@ -13,11 +13,13 @@
   (it "builds initial sketch state"
     (let [state (sut/initial-sketch-state {:scene {:x 1}
                                            :architecture {:a 1}
+                                           :reload-architecture :reload-fn
                                            :has-architecture? true
                                            :viewport-height 700
                                            :viewport-width 1300})]
       (should= {:x 1} (:scene state))
       (should= {:a 1} (:architecture state))
+      (should= :reload-fn (:reload-architecture state))
       (should= [] (:namespace-path state))
       (should= 700 (:viewport-height state))
       (should= 1300 (:viewport-width state)))))
